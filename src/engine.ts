@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const PROOFCHAIN_API = 'https://api.proofchain.co.za';
+// Use the tenant subdomain as the API base so the backend captures the tenant context automatically
+const TENANT_API = 'https://fanpass.proofchain.co.za';
 
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   const token = input.trim();
@@ -8,9 +9,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
     'Origin': 'https://fanpass.onefootball.com',
-    'Referer': 'https://fanpass.onefootball.com/',
-    'X-Tenant-Slug': 'fanpass',
-    'X-Tenant-ID': 'tenant_1g6k1cew859ls7408'
+    'Referer': 'https://fanpass.onefootball.com/'
   };
 
   if (token.startsWith('eyJ')) {
@@ -20,10 +19,11 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   }
 
   try {
-    // Hit the API backend with both headers and query params for maximum compatibility
-    const res = await axios.get(`${PROOFCHAIN_API}/quests`, { 
+    const questId = "de5a250f-233e-4cb7-8de1-273a437d420d";
+
+    // Try hitting the quest endpoint directly on the tenant subdomain API
+    const res = await axios.get(`${TENANT_API}/quests/${questId}/start/link`, { 
       headers, 
-      params: { tenant: 'fanpass' },
       timeout: 15000, 
       validateStatus: () => true 
     });
@@ -34,7 +34,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
         statusCode: res.status,
         payload: res.data
       },
-      message: `✅ API Quests Response [Status ${res.status}]!`
+      message: `✅ Tenant Subdomain API Response [Status ${res.status}]!`
     };
 
   } catch (error: any) {
