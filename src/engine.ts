@@ -44,39 +44,45 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const startRes = await axios.post(startUrl, {}, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 2. Trigger Event Ingestion via Verification Hooks
-    // We target potential verification and proof endpoints uncovered by the frontend scan
-    const verificationEndpoints = [
-      `${BASE_API}/quests/${questId}/verify`,
-      `${BASE_API}/verify/proof`,
-      `${BASE_API}/quests/${questId}/progress/${encodedUser}/verify`,
-      `${BASE_API}/verify/batch/${questId}`
+    // 2. Attempt to fetch user Merkle proof data from potential endpoints
+    const proofLookupUrls = [
+      `${BASE_API}/verify/proof/${encodedUser}`,
+      `${BASE_API}/quests/${questId}/proof/${encodedUser}`,
+      `${BASE_API}/verify/user/${encodedUser}`,
+      `${BASE_API}/quests/${questId}/user-quests/${startRes.data?.id}`
     ];
 
-    const verifyResults = [];
-    for (const url of verificationEndpoints) {
-      for (const method of ['post', 'put', 'get']) {
-        const vRes = await axios({
-          method,
-          url,
-          headers,
-          data: { questId, user_id: userId, userQuestId: startRes.data?.id },
-          validateStatus: () => true
-        });
-
-        verifyResults.push({
-          attempt: `${method.toUpperCase()} ${url}`,
-          status: vRes.status,
-          response: vRes.data
-        });
-
-        if (vRes.status >= 200 && vRes.status < 300) break;
+    let proofData = null;
+    for (const pUrl of proofLookupUrls) {
+      const pRes = await axios.get(pUrl, { headers, validateStatus: () => true });
+      logs.push({ lookup: pUrl, status: pRes.status, response: pRes.data });
+      if (pRes.status >= 200 && pRes.status < 300 && pRes.data) {
+        proofData = pRes.data;
+        break;
       }
     }
 
-    logs.push({ step: 'VERIFICATION_TRIGGER', results: verifyResults });
+    // 3. If proof data was retrieved, submit it to /api/verify/proof
+    let verifyResStatus = null;
+    let verifyResData = null;
 
-    // 3. Attempt to claim reward after triggering verification
+    if (proofData && proofData.leaf && proofData.proof && proofData.root) {
+      const verifyUrl = `${BASE_API}/verify/proof`;
+      const vRes = await axios.post(verifyUrl, {
+        questId,
+        user_id: userId,
+        userQuestId: startRes.data?.id,
+        leaf: proofData.leaf,
+        proof: proofData.proof,
+        root: proofData.root
+      }, { headers, validateStatus: () => true });
+
+      verifyResStatus = vRes.status;
+      verifyResData = vRes.data;
+      logs.push({ step: 'SUBMIT_PROOF', status: verifyResStatus, response: verifyResData });
+    }
+
+    // 4. Attempt to claim reward
     const claimUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`;
     const claimRes = await axios.post(claimUrl, {}, { headers, validateStatus: () => true });
     logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
@@ -86,7 +92,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { userId, questId, logs },
-      message: success ? '🚀 Polymarket Quest Ingested & Claimed!' : '⚡ Verification triggers dispatched. Check execution logs.'
+      message: success ? '🚀 Polymarket Quest Verified & Claimed Successfully!' : '⚡ Proof check complete. Check execution logs.'
     };
 
   } catch (error: any) {
