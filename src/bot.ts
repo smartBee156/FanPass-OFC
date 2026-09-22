@@ -24,65 +24,47 @@ function saveAccounts(accounts: Account[]) {
   fs.writeFileSync(filePath, JSON.stringify(accounts, null, 2));
 }
 
-// Helper to safely format and truncate JSON for Telegram
-function formatResponse(data: any): string {
-  const jsonStr = JSON.stringify(data, null, 2);
-  if (jsonStr.length > 3000) {
-    return jsonStr.substring(0, 3000) + '\n... (output truncated for length)';
+// Bulletproof reply helper that prevents Telegram "message is too long" crashes
+async function safeReply(ctx: any, text: string) {
+  try {
+    if (text.length > 1500) {
+      text = text.substring(0, 1500) + '\n... [Output truncated to prevent Telegram size limit error]';
+    }
+    await ctx.reply(text);
+  } catch (err: any) {
+    console.error('Telegram reply error:', err.message);
   }
-  return jsonStr;
 }
 
 bot.start((ctx) => {
-  ctx.reply(
-    '🚀 *FanPass Professional Bot Active*\n\n' +
-    '• **Paste your access_token directly** to save an account.\n' +
-    '• Type `/run` to test all saved accounts.\n' +
-    '• Type `/run <token>` to test a token instantly.'
-  );
+  safeReply(ctx, '🚀 FanPass Professional Bot Active\n\n• Paste your access_token directly to save an account.\n• Type /run to test all saved accounts.\n• Type /list to view saved accounts.');
 });
 
-// Handle /run and /run <token>
+// Handle /run command
 bot.command('run', async (ctx) => {
   try {
-    const messageText = ctx.message.text.trim();
-    const parts = messageText.split(' ');
-    
-    // Case A: Inline token passed with /run
-    if (parts.length > 1) {
-      const inlineToken = parts.slice(1).join(' ').trim();
-      await ctx.reply('🔍 *Testing inline token against FanPass API...*');
-      const result = await pollAccountVerification(inlineToken);
-      
-      if (result.success) {
-        const safeJson = formatResponse(result.data);
-        return ctx.reply(`✅ *Token Valid & Verified!*\n\nResponse:\n\`\`\`json\n${safeJson}\`\`\``, { parse_mode: 'Markdown' });
-      } else {
-        return ctx.reply(result.message);
-      }
-    }
-
-    // Case B: Run against all saved accounts
     const accounts = getAccounts();
     if (accounts.length === 0) {
-      return ctx.reply('📂 No accounts saved yet. Paste your token directly into the chat or use `/run <token>`.');
+      return safeReply(ctx, '📂 No accounts saved yet. Paste your access_token directly into the chat.');
     }
 
-    await ctx.reply(`🔍 Testing ${accounts.length} saved account(s)...`);
+    await safeReply(ctx, '🔍 Testing ' + accounts.length + ' saved account(s) against FanPass API...');
 
     for (const acc of accounts) {
-      await ctx.reply(`[*] Checking *${acc.name}*...`);
+      await safeReply(ctx, '[*] Checking ' + acc.name + '...');
       const result = await pollAccountVerification(acc.token);
       
       if (result.success) {
-        const safeJson = formatResponse(result.data);
-        await ctx.reply(`✅ *${acc.name} Success!*\n\`\`\`json\n${safeJson}\`\`\``, { parse_mode: 'Markdown' });
+        const jsonString = JSON.stringify(result.data, null, 2);
+        const snippet = jsonString.length > 800 ? jsonString.substring(0, 800) + '\n...' : jsonString;
+        const msg = '✅ ' + acc.name + ' Success!\n\nAPI Response Snippet:\n' + snippet;
+        await safeReply(ctx, msg);
       } else {
-        await ctx.reply(`❌ *${acc.name} Failed:* ${result.message}`);
+        await safeReply(ctx, '❌ ' + acc.name + ' Failed: ' + result.message);
       }
     }
   } catch (err: any) {
-    await ctx.reply(`⚠️ Critical Error: ${err.message}`);
+    await safeReply(ctx, '⚠️ Critical Error: ' + err.message);
   }
 });
 
@@ -90,40 +72,40 @@ bot.command('run', async (ctx) => {
 bot.command('list', (ctx) => {
   try {
     const accounts = getAccounts();
-    if (accounts.length === 0) return ctx.reply('📂 No accounts saved yet.');
+    if (accounts.length === 0) return safeReply(ctx, '📂 No accounts saved yet.');
 
-    const list = accounts.map((acc, index) => `*${index + 1}.* ${acc.name} (Token: \`${acc.token.substring(0, 15)}...\`)`).join('\n');
-    ctx.reply(`📋 *Saved Accounts (${accounts.length}):*\n\n${list}`, { parse_mode: 'Markdown' });
+    const list = accounts.map((acc, index) => (index + 1) + '. ' + acc.name).join('\n');
+    safeReply(ctx, '📋 Saved Accounts (' + accounts.length + '):\n\n' + list);
   } catch (err: any) {
-    ctx.reply(`⚠️ Error: ${err.message}`);
+    safeReply(ctx, '⚠️ Error: ' + err.message);
   }
 });
 
-// Handle clearing saved accounts
+// Handle clearing accounts
 bot.command('clear', (ctx) => {
   try {
     saveAccounts([]);
-    ctx.reply('🗑️ All saved accounts cleared from database.');
+    safeReply(ctx, '🗑️ All saved accounts cleared.');
   } catch (err: any) {
-    ctx.reply(`⚠️ Error: ${err.message}`);
+    safeReply(ctx, '⚠️ Error: ' + err.message);
   }
 });
 
-// Handle raw text token pasting
+// Handle text token pasting
 bot.on('text', async (ctx) => {
   try {
     const text = ctx.message.text.trim();
     if (text.startsWith('/')) return;
 
     const accounts = getAccounts();
-    const name = `Account ${accounts.length + 1}`;
+    const name = 'Account ' + (accounts.length + 1);
 
     accounts.push({ name, token: text });
     saveAccounts(accounts);
 
-    ctx.reply(`✅ *${name}* saved successfully!\n\nType \`/run\` to test all accounts or \`/list\` to view them.`);
+    safeReply(ctx, '✅ ' + name + ' saved successfully!\n\nType /run now to test your accounts.');
   } catch (err: any) {
-    ctx.reply(`⚠️ Error saving account: ${err.message}`);
+    safeReply(ctx, '⚠️ Error saving account: ' + err.message);
   }
 });
 
