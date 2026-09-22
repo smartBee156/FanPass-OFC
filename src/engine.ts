@@ -18,7 +18,6 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     headers['Cookie'] = token;
   }
 
-  // Probe API routes directly on the tenant subdomain
   const candidateEndpoints = [
     '/api/quests',
     '/v1/quests',
@@ -37,16 +36,15 @@ export async function pollAccountVerification(input: string): Promise<{ success:
         validateStatus: () => true 
       });
 
-      const contentType = res.headers['content-type'] || '';
+      // Explicitly cast to string to satisfy TypeScript strict typing
+      const contentType = String(res.headers['content-type'] || '');
       
       probeResults[endpoint] = {
         status: res.status,
         contentType,
-        // If it's JSON, show the data; if it's HTML, summarize it so we don't spam chat
         data: contentType.includes('application/json') ? res.data : '[HTML Frontend Response]'
       };
 
-      // If we find an endpoint returning JSON with a 200 OK status
       if (res.status === 200 && contentType.includes('application/json')) {
         return {
           success: true,
