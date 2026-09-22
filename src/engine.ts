@@ -8,7 +8,10 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
     'Origin': 'https://fanpass.onefootball.com',
-    'Referer': 'https://fanpass.onefootball.com/'
+    'Referer': 'https://fanpass.onefootball.com/',
+    // Required tenant context discovered from the API response
+    'X-Tenant-Slug': 'fanpass',
+    'X-Tenant-Id': 'tenant_1g6k1cew859ls7408'
   };
 
   if (token.startsWith('eyJ')) {
@@ -17,46 +20,24 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     headers['Cookie'] = token;
   }
 
-  // Probe potential route prefixes on proofchain.co.za
-  const candidatePaths = [
-    '/quests',
-    '/api/quests',
-    '/v1/quests',
-    '/rewards',
-    '/users/me',
-    '/me'
-  ];
+  try {
+    // Target the quests endpoint with full tenant context
+    const res = await axios.get(`${PROOFCHAIN_API}/quests`, { 
+      headers, 
+      timeout: 15000, 
+      validateStatus: () => true 
+    });
 
-  const results: Record<string, any> = {};
+    return {
+      success: true,
+      data: {
+        statusCode: res.status,
+        payload: res.data
+      },
+      message: `✅ Proofchain Quests Fetched [Status ${res.status}]!`
+    };
 
-  for (const path of candidatePaths) {
-    try {
-      const res = await axios.get(`${PROOFCHAIN_API}${path}`, { 
-        headers, 
-        timeout: 10000, 
-        validateStatus: () => true 
-      });
-
-      results[path] = { status: res.status, data: res.data };
-
-      if (res.status >= 200 && res.status < 300) {
-        return {
-          success: true,
-          data: {
-            workingPath: path,
-            payload: res.data
-          },
-          message: `✅ Proofchain Route Found: ${path}`
-        };
-      }
-    } catch (err: any) {
-      results[path] = { error: err.message };
-    }
+  } catch (error: any) {
+    return { success: false, message: '❌ Proofchain Network Error: ' + error.message };
   }
-
-  return {
-    success: true,
-    data: { probeResults: results },
-    message: '✅ Connected to Proofchain API. Probed routes.'
-  };
 }
