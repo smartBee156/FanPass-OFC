@@ -5,7 +5,6 @@ const PROOFCHAIN_API = 'https://api.proofchain.co.za';
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   const token = input.trim();
   const headers: Record<string, string> = {
-    'Host': 'api.proofchain.co.za',
     'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
     'Origin': 'https://fanpass.onefootball.com',
@@ -20,14 +19,17 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     headers['Cookie'] = token;
   }
 
-  // Probe likely API path variants on the backend server
+  // Comprehensive list of potential backend API route prefixes
   const candidateEndpoints = [
+    '/quests',
     '/api/quests',
     '/v1/quests',
     '/api/v1/quests',
-    '/tenants/fanpass/quests',
-    '/quests'
+    '/user/quests',
+    '/auth/quests'
   ];
+
+  const probeResults: Record<string, any> = {};
 
   for (const endpoint of candidateEndpoints) {
     try {
@@ -37,26 +39,18 @@ export async function pollAccountVerification(input: string): Promise<{ success:
         validateStatus: () => true 
       });
 
-      // If we hit a successful JSON response or anything other than a standard routing 404/400
-      if (res.status === 200 || (res.status !== 404 && res.status !== 400)) {
-        return {
-          success: true,
-          data: {
-            endpoint,
-            statusCode: res.status,
-            payload: res.data
-          },
-          message: `✅ Found Active API Route: ${endpoint} [Status ${res.status}]!`
-        };
-      }
-    } catch (err) {
-      // Continue probing next endpoint
+      probeResults[endpoint] = {
+        status: res.status,
+        data: res.data
+      };
+    } catch (err: any) {
+      probeResults[endpoint] = { error: err.message };
     }
   }
 
   return {
     success: true,
-    data: { message: "Probed all backend API endpoints with tenant headers." },
-    message: '✅ API Probed. Check payload.'
+    data: probeResults,
+    message: '✅ Complete API Route Audit Executed!'
   };
 }
