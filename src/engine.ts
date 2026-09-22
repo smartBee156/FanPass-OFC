@@ -9,7 +9,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     'Accept': 'application/json, text/plain, */*',
     'Origin': 'https://fanpass.onefootball.com',
     'Referer': 'https://fanpass.onefootball.com/',
-    'X-Tenant-ID': 'tenant_1g6k1cew859ls7408'
+    'X-Tenant-ID': 'tenant_1g6k1cew859ls7408',
+    'Content-Type': 'application/json'
   };
 
   if (token.startsWith('eyJ')) {
@@ -18,55 +19,60 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     headers['Cookie'] = token;
   }
 
-  try {
-    // Step 1: Fetch the live list of quests using the verified endpoint
-    const listRes = await axios.get(`${SUBDOMAIN_API}/api/quests`, { 
-      headers, 
-      timeout: 15000, 
-      validateStatus: () => true 
-    });
+  // Your exact live Polymarket quest ID discovered from the API
+  const polymarketQuestId = '81ff3b8a-03bf-488c-828c-f60923e96149';
 
-    if (listRes.status !== 200 || !Array.isArray(listRes.data)) {
-      return {
-        success: false,
-        message: `⚠️ Failed to fetch quests [Status ${listRes.status}]`
-      };
-    }
+  // Comprehensive force-tick and verification route variants
+  const forceActions = [
+    { path: `/api/quests/${polymarketQuestId}/verify`, method: 'post' },
+    { path: `/api/quests/${polymarketQuestId}/complete`, method: 'post' },
+    { path: `/api/quests/${polymarketQuestId}/claim`, method: 'post' },
+    { path: `/api/quests/${polymarketQuestId}/start/link`, method: 'post' },
+    { path: `/api/quests/${polymarketQuestId}/start/link`, method: 'get' },
+    { path: `/api/quests/${polymarketQuestId}/check`, method: 'post' }
+  ];
 
-    const quests = listRes.data;
-    const executionResults = [];
+  const probeResults = [];
 
-    // Step 2: Automatically loop through each live quest and trigger its start/link route
-    for (const quest of quests) {
-      const questId = quest.id;
-      const questName = quest.name || 'Quest Task';
-      
-      if (questId) {
-        const triggerRes = await axios.get(`${SUBDOMAIN_API}/api/quests/${questId}/start/link`, { 
-          headers, 
-          timeout: 10000, 
-          validateStatus: () => true 
-        });
+  for (const action of forceActions) {
+    try {
+      const res = await axios({
+        method: action.method,
+        url: `${SUBDOMAIN_API}${action.path}`,
+        headers,
+        data: { questId: polymarketQuestId },
+        timeout: 10000,
+        validateStatus: () => true
+      });
 
-        executionResults.push({
-          questId,
-          questName,
-          status: triggerRes.status,
-          response: triggerRes.data
-        });
+      probeResults.push({
+        action: `${action.method.toUpperCase()} ${action.path}`,
+        status: res.status,
+        response: res.data
+      });
+
+      // If any endpoint accepts the verification with a 2xx success status, we nailed it
+      if (res.status >= 200 && res.status < 300) {
+        return {
+          success: true,
+          data: {
+            winningAction: `${action.method.toUpperCase()} ${action.path}`,
+            payload: res.data
+          },
+          message: `🚀 Polymarket Quest Force-Ticked Successfully via ${action.method.toUpperCase()} ${action.path}!`
+        };
       }
+    } catch (err: any) {
+      probeResults.push({
+        action: `${action.method.toUpperCase()} ${action.path}`,
+        error: err.message
+      });
     }
-
-    return {
-      success: true,
-      data: {
-        totalQuestsProcessed: quests.length,
-        results: executionResults
-      },
-      message: `✅ Successfully automated ${quests.length} active quests!`
-    };
-
-  } catch (error: any) {
-    return { success: false, message: '❌ Automation Error: ' + error.message };
   }
+
+  return {
+    success: true,
+    data: { probeResults },
+    message: '⚡ Force-tick audit executed. Check response snippet for winning route.'
+  };
 }
