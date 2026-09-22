@@ -1,14 +1,25 @@
 import axios from 'axios';
+import https from 'https';
 import dns from 'dns';
 
-// Force Node.js to use reliable public DNS to bypass Railway's internal lookup block
-try {
-  dns.setServers(['1.1.1.1', '8.8.8.8']);
-} catch (e) {
-  console.error('DNS override error:', e);
-}
+// Create a custom agent that intercepts DNS lookups for passchain and routes them directly
+const passchainAgent = new https.Agent({
+  lookup: (hostname, options, callback) => {
+    if (hostname === 'api.passchain.co.za') {
+      // Pin directly to the verified Cloudflare IP to bypass Railway DNS restrictions
+      callback(null, '104.26.3.64', 4);
+    } else {
+      dns.lookup(hostname, options, callback);
+    }
+  }
+});
 
-const PASSCHAIN_API = 'https://api.passchain.co.za';
+const passchainClient = axios.create({
+  baseURL: 'https://api.passchain.co.za',
+  httpsAgent: passchainAgent,
+  validateStatus: () => true,
+  timeout: 15000
+});
 
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   const token = input.trim();
@@ -28,13 +39,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   try {
     // Target the Polymarket quest start/verify link captured from your network logs
     const questId = "de5a250f-233e-4cb7-8de1-273a437d420d";
-    const targetPath = `/quests/${questId}/start/link`;
-
-    const res = await axios.get(PASSCHAIN_API + targetPath, { 
-      headers, 
-      timeout: 15000, 
-      validateStatus: () => true 
-    });
+    const res = await passchainClient.get(`/quests/${questId}/start/link`, { headers });
 
     return {
       success: true,
