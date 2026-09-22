@@ -44,42 +44,54 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const startRes = await axios.post(startUrl, {}, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 2. Attempt to fetch user Merkle proof data from potential endpoints
-    const proofLookupUrls = [
-      `${BASE_API}/verify/proof/${encodedUser}`,
-      `${BASE_API}/quests/${questId}/proof/${encodedUser}`,
-      `${BASE_API}/verify/user/${encodedUser}`,
-      `${BASE_API}/quests/${questId}/user-quests/${startRes.data?.id}`
-    ];
+    const serverInstance = startRes.data || {};
 
-    let proofData = null;
-    for (const pUrl of proofLookupUrls) {
-      const pRes = await axios.get(pUrl, { headers, validateStatus: () => true });
-      logs.push({ lookup: pUrl, status: pRes.status, response: pRes.data });
-      if (pRes.status >= 200 && pRes.status < 300 && pRes.data) {
-        proofData = pRes.data;
-        break;
-      }
+    // 2. Build fully forced completion progress state for all steps (0 to 3)
+    const forcedProgress: Record<string, any> = {};
+    for (let i = 0; i < 4; i++) {
+      forcedProgress[i.toString()] = {
+        count: 1,
+        cumulative_value: 1,
+        target: 1,
+        completed: true,
+        status: 'completed',
+        completed_at: new Date().toISOString()
+      };
     }
 
-    // 3. If proof data was retrieved, submit it to /api/verify/proof
-    let verifyResStatus = null;
-    let verifyResData = null;
+    const mutationPayload = {
+      ...serverInstance,
+      status: 'completed',
+      current_step: 4,
+      steps_completed: 4,
+      completion_percentage: 100,
+      step_progress: forcedProgress,
+      completed_at: new Date().toISOString()
+    };
 
-    if (proofData && proofData.leaf && proofData.proof && proofData.root) {
-      const verifyUrl = `${BASE_API}/verify/proof`;
-      const vRes = await axios.post(verifyUrl, {
-        questId,
-        user_id: userId,
-        userQuestId: startRes.data?.id,
-        leaf: proofData.leaf,
-        proof: proofData.proof,
-        root: proofData.root
-      }, { headers, validateStatus: () => true });
+    // 3. Mutate the progress document directly via PUT and PATCH
+    const progressUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}`;
+    let progressUpdated = false;
 
-      verifyResStatus = vRes.status;
-      verifyResData = vRes.data;
-      logs.push({ step: 'SUBMIT_PROOF', status: verifyResStatus, response: verifyResData });
+    for (const method of ['put', 'patch', 'post']) {
+      const pRes = await axios({
+        method,
+        url: progressUrl,
+        headers,
+        data: mutationPayload,
+        validateStatus: () => true
+      });
+
+      logs.push({ 
+        attempt: `${method.toUpperCase()} ${progressUrl}`, 
+        status: pRes.status, 
+        response: pRes.data 
+      });
+
+      if (pRes.status >= 200 && pRes.status < 300) {
+        progressUpdated = true;
+        break;
+      }
     }
 
     // 4. Attempt to claim reward
@@ -91,8 +103,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     return {
       success: true,
-      data: { userId, questId, logs },
-      message: success ? '🚀 Polymarket Quest Verified & Claimed Successfully!' : '⚡ Proof check complete. Check execution logs.'
+      data: { userId, questId, progressUpdated, logs },
+      message: success ? '🚀 Polymarket Quest Force-Completed & Claimed Successfully!' : '⚡ Progress synchronization complete. Check execution logs.'
     };
 
   } catch (error: any) {
