@@ -54,60 +54,70 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const userQuestId = startRes.data?.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
 
-    // Step 2: Advance pending steps (1, 2, 3) individually to prevent backend 500 crashes
-    const stepTargetIndices = [1, 2, 3];
-    const stepResults = [];
+    // Step 2: Build a fully completed step-progress payload matching the server's schema
+    const completedStepProgress: Record<string, any> = {};
+    for (let i = 0; i < 4; i++) {
+      completedStepProgress[i.toString()] = {
+        count: 1,
+        cumulative_value: 1,
+        target: 1,
+        completed: true,
+        status: 'completed',
+        completed_at: new Date().toISOString()
+      };
+    }
 
-    for (const stepIndex of stepTargetIndices) {
-      const stepEndpoints = [
-        `${SUBDOMAIN_API}/api/user-quests/${userQuestId}/steps/${stepIndex}/complete`,
-        `${SUBDOMAIN_API}/api/user-quests/${userQuestId}/step/${stepIndex}`,
-        `${SUBDOMAIN_API}/api/quests/${questId}/steps/${stepIndex}/verify`
-      ];
+    const updatePayload = {
+      id: userQuestId,
+      quest_id: questId,
+      status: 'completed',
+      steps_completed: 4,
+      total_steps: 4,
+      completion_percentage: 100,
+      step_progress: completedStepProgress
+    };
 
-      let stepDone = false;
-      for (const ep of stepEndpoints) {
-        const res = await axios.post(ep, { step: stepIndex, status: 'completed' }, {
-          headers,
-          timeout: 6000,
-          validateStatus: () => true
-        });
+    // Step 3: Professionally probe user-quest resource update endpoints
+    const candidateEndpoints = [
+      { method: 'put', url: `${SUBDOMAIN_API}/api/user-quests/${userQuestId}` },
+      { method: 'patch', url: `${SUBDOMAIN_API}/api/user-quests/${userQuestId}` },
+      { method: 'post', url: `${SUBDOMAIN_API}/api/user-quests/${userQuestId}/complete` },
+      { method: 'put', url: `${SUBDOMAIN_API}/api/user_quests/${userQuestId}` },
+      { method: 'post', url: `${SUBDOMAIN_API}/api/quests/${questId}/user-quests/${userQuestId}` }
+    ];
 
-        if (res.status >= 200 && res.status < 300) {
-          stepDone = true;
-          stepResults.push({ step: stepIndex, endpoint: ep, status: res.status, response: res.data });
-          break;
-        }
-      }
-      if (!stepDone) {
-        stepResults.push({ step: stepIndex, status: 'skipped_or_failed' });
+    let completed = false;
+    let winningResponse = null;
+
+    for (const endpoint of candidateEndpoints) {
+      const res = await axios({
+        method: endpoint.method,
+        url: endpoint.url,
+        headers,
+        data: updatePayload,
+        timeout: 8000,
+        validateStatus: () => true
+      });
+
+      logs.push({ 
+        step: 'INSTANCE_UPDATE', 
+        method: endpoint.method.toUpperCase(), 
+        url: endpoint.url, 
+        status: res.status, 
+        response: res.data 
+      });
+
+      if (res.status >= 200 && res.status < 300) {
+        completed = true;
+        winningResponse = res.data;
+        break;
       }
     }
 
-    logs.push({ step: 'STEP_PROGRESSIONS', results: stepResults });
-
-    // Step 3: Final completion trigger
-    const finalRes = await axios.post(`${SUBDOMAIN_API}/api/quests/verify`, {
-      id: questId,
-      questId: questId,
-      slug: questSlug,
-      name: questName,
-      user_quest_id: userQuestId,
-      status: 'completed'
-    }, {
-      headers,
-      timeout: 8000,
-      validateStatus: () => true
-    });
-
-    logs.push({ step: 'FINAL_VERIFY', status: finalRes.status, response: finalRes.data });
-
-    const completed = finalRes.status >= 200 && finalRes.status < 300;
-
     return {
       success: true,
-      data: { userQuestId, completed, logs },
-      message: completed ? '🚀 Polymarket Quest Fully Ticked!' : '⚡ Steps processed. Check logs for details.'
+      data: { userQuestId, completed, winningResponse, logs },
+      message: completed ? '🚀 Polymarket Quest Force-Ticked Successfully!' : '⚡ Instance synchronized. Check update logs.'
     };
 
   } catch (error: any) {
