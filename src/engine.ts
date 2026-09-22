@@ -9,7 +9,6 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     'Accept': 'application/json, text/plain, */*',
     'Origin': 'https://fanpass.onefootball.com',
     'Referer': 'https://fanpass.onefootball.com/',
-    // Strict uppercase casing required by the backend tenant validator
     'X-Tenant-Slug': 'fanpass',
     'X-Tenant-ID': 'tenant_1g6k1cew859ls7408'
   };
@@ -21,10 +20,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   }
 
   try {
-    const questId = "de5a250f-233e-4cb7-8de1-273a437d420d";
-    
-    // Hit the target quest verification route directly
-    const res = await axios.get(`${PROOFCHAIN_API}/quests/${questId}/start/link`, { 
+    // Fetch all active quests for your authenticated user profile
+    const res = await axios.get(`${PROOFCHAIN_API}/quests`, { 
       headers, 
       timeout: 15000, 
       validateStatus: () => true 
@@ -34,9 +31,9 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       success: true,
       data: {
         statusCode: res.status,
-        payload: res.data
+        questsPayload: res.data
       },
-      message: `✅ Polymarket Quest Triggered [Status ${res.status}]!`
+      message: `✅ Successfully fetched active user quests [Status ${res.status}]!`
     };
 
   } catch (error: any) {
