@@ -8,8 +8,7 @@ const filePath = path.join(__dirname, 'accounts.json');
 
 interface Account {
   name: string;
-  cookie: string;
-  verified: boolean;
+  token: string;
 }
 
 function getAccounts(): Account[] {
@@ -27,55 +26,93 @@ function saveAccounts(accounts: Account[]) {
 
 bot.start((ctx) => {
   ctx.reply(
-    '🚀 *FanPass Emergency Bot Online*\n\n' +
-    '• **Paste your access token here** to save it!\n' +
-    '• Type `/run` to instantly test the API connection.'
+    '🚀 *FanPass Professional Bot Active*\n\n' +
+    '• **Paste your access_token directly** to save an account.\n' +
+    '• Type `/run` to test all saved accounts.\n' +
+    '• Type `/run <token>` to test a token instantly.'
   );
 });
 
-bot.on('text', async (ctx) => {
+// Handle /run and /run <token>
+bot.command('run', async (ctx) => {
   try {
-    const text = ctx.message.text.trim();
-    if (text.startsWith('/')) return;
+    const messageText = ctx.message.text.trim();
+    const parts = messageText.split(' ');
+    
+    // Case A: User passed a token inline right after /run
+    if (parts.length > 1) {
+      const inlineToken = parts.slice(1).join(' ').trim();
+      await ctx.reply('🔍 *Testing inline token against FanPass API...*');
+      const result = await pollAccountVerification(inlineToken);
+      
+      if (result.success) {
+        return ctx.reply(`✅ *Token Valid & Verified!*\n\nResponse:\n\`\`\`json\n${JSON.stringify(result.data, null, 2)}\`\`\``, { parse_mode: 'Markdown' });
+      } else {
+        return ctx.reply(result.message);
+      }
+    }
 
+    // Case B: Run against all saved accounts in JSON
     const accounts = getAccounts();
-    const name = `Account ${accounts.length + 1}`;
+    if (accounts.length === 0) {
+      return ctx.reply('📂 No accounts saved yet. Paste your token directly into the chat or use `/run <token>`.');
+    }
 
-    accounts.push({ name, cookie: text, verified: false });
-    saveAccounts(accounts);
+    await ctx.reply(`🔍 Testing ${accounts.length} saved account(s)...`);
 
-    ctx.reply(`[✅] *${name}* saved successfully!\n\nType /run now to test it against the API.`);
+    for (const acc of accounts) {
+      await ctx.reply(`[*] Checking *${acc.name}*...`);
+      const result = await pollAccountVerification(acc.token);
+      
+      if (result.success) {
+        await ctx.reply(`✅ *${acc.name} Success!*\n\`\`\`json\n${JSON.stringify(result.data, null, 2)}\`\`\``, { parse_mode: 'Markdown' });
+      } else {
+        await ctx.reply(`❌ *${acc.name} Failed:* ${result.message}`);
+      }
+    }
   } catch (err: any) {
-    ctx.reply(`⚠️ Error: ${err.message}`);
+    await ctx.reply(`⚠️ Critical Error: ${err.message}`);
   }
 });
 
+// Handle listing saved accounts
 bot.command('list', (ctx) => {
   try {
     const accounts = getAccounts();
     if (accounts.length === 0) return ctx.reply('📂 No accounts saved yet.');
 
-    const list = accounts.map((acc: Account) => `• *${acc.name}* | Verified: ${acc.verified ? '✅' : '⏳'}`).join('\n');
-    ctx.reply(`📋 *Saved Accounts:*\n\n${list}`);
+    const list = accounts.map((acc, index) => `*${index + 1}.* ${acc.name} (Token: \`${acc.token.substring(0, 15)}...\`)`).join('\n');
+    ctx.reply(`📋 *Saved Accounts (${accounts.length}):*\n\n${list}`, { parse_mode: 'Markdown' });
   } catch (err: any) {
     ctx.reply(`⚠️ Error: ${err.message}`);
   }
 });
 
-bot.command('run', async (ctx) => {
+// Handle clearing saved accounts
+bot.command('clear', (ctx) => {
   try {
-    await ctx.reply('🔍 Testing accounts against FanPass API...');
-    const accounts = getAccounts();
-
-    if (accounts.length === 0) return ctx.reply('📂 No accounts saved yet. Paste your token first.');
-
-    for (const acc of accounts) {
-      await ctx.reply(`[*] Checking *${acc.name}*...`);
-      const apiResult = await pollAccountVerification(acc.cookie);
-      await ctx.reply(apiResult);
-    }
+    saveAccounts([]);
+    ctx.reply('🗑️ All saved accounts cleared from database.');
   } catch (err: any) {
-    await ctx.reply(`⚠️ Error: ${err.message}`);
+    ctx.reply(`⚠️ Error: ${err.message}`);
+  }
+});
+
+// Handle raw text token pasting (saving accounts)
+bot.on('text', async (ctx) => {
+  try {
+    const text = ctx.message.text.trim();
+    if (text.startsWith('/')) return; // Ignore any other commands
+
+    const accounts = getAccounts();
+    const name = `Account ${accounts.length + 1}`;
+
+    accounts.push({ name, token: text });
+    saveAccounts(accounts);
+
+    ctx.reply(`✅ *${name}* saved successfully!\n\nType \`/run\` to test all accounts or \`/list\` to view them.`);
+  } catch (err: any) {
+    ctx.reply(`⚠️ Error saving account: ${err.message}`);
   }
 });
 
