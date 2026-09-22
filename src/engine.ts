@@ -1,12 +1,23 @@
 import axios from 'axios';
 
-const FANPASS_API = 'https://fanpass.onefootball.com/api';
+const BASE_URL = 'https://fanpass.onefootball.com';
+
+const CANDIDATE_PATHS = [
+  '/api/quests',
+  '/api/user',
+  '/api/profile',
+  '/api/me',
+  '/api/status',
+  '/api/v1/quests',
+  '/api/v1/user',
+  '/api/auth/me'
+];
 
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   const token = input.trim();
   const headers: Record<string, string> = {
     'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile)',
-    'Accept': 'application/json'
+    'Accept': 'application/json, text/plain, */*'
   };
 
   if (token.startsWith('eyJ')) {
@@ -16,19 +27,35 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     headers['Cookie'] = token;
   }
 
-  try {
-    const res = await axios.get(FANPASS_API + '/quests/status', { headers, timeout: 15000 });
-    return { success: true, data: res.data, message: 'API request successful.' };
-  } catch (error: any) {
-    const status = error.response ? error.response.status : 'Network';
-    const errData = error.response ? error.response.data : error.message;
-    
-    if (status === 401 || status === 403) {
-      return { success: false, message: '❌ Unauthorized [Status ' + status + ']: Token is expired or invalid. Grab a fresh access_token from Cookie-Editor.' };
-    } else if (status === 429) {
-      return { success: false, message: '⚠️ Rate Limited [429]: Server congestion detected.' };
-    } else {
-      return { success: false, message: '❌ API Error [' + status + ']: ' + JSON.stringify(errData) };
+  for (const path of CANDIDATE_PATHS) {
+    try {
+      const url = BASE_URL + path;
+      const res = await axios.get(url, { 
+        headers, 
+        timeout: 10000, 
+        validateStatus: () => true // Allow handling 4xx/5xx without throwing
+      });
+      
+      const contentType = res.headers['content-type'] || '';
+      const bodyStr = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+      
+      // Skip if it returned HTML (SPA fallback page)
+      if (contentType.includes('text/html') || bodyStr.trim().startsWith('<!doctype') || bodyStr.trim().startsWith('<html')) {
+        continue; 
+      }
+
+      if (res.status >= 200 && res.status < 300) {
+        return { success: true, data: res.data, message: `✅ Connected successfully via ${path}!` };
+      } else if (res.status === 401 || res.status === 403) {
+        return { success: false, message: `❌ Unauthorized [Status ${res.status}] on ${path}: Token is invalid or expired.` };
+      }
+    } catch (err: any) {
+      // Ignore and try next path
     }
   }
+
+  return { 
+    success: false, 
+    message: '❌ All candidate endpoints returned HTML pages. Tip: Open your mobile browser Network tab while on FanPass to see the exact API URL being called.' 
+  };
 }
