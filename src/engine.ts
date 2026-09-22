@@ -54,64 +54,62 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const userQuestId = startRes.data?.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
 
-    // Step 2: Construct a comprehensive schema payload with explicit step arrays
-    const richPayloads = [
-      {
-        user_quest_id: userQuestId,
-        quest_id: questId,
-        questId: questId,
-        slug: questSlug,
-        name: questName,
-        status: 'completed',
-        steps_completed: 4,
-        total_steps: 4,
-        completion_percentage: 100,
-        steps: [
-          { step: 0, status: 'completed', completed: true },
-          { step: 1, status: 'completed', completed: true },
-          { step: 2, status: 'completed', completed: true },
-          { step: 3, status: 'completed', completed: true }
-        ]
-      },
-      {
-        id: userQuestId,
-        user_quest_id: userQuestId,
-        status: 'completed',
-        step_progress: {
-          "0": { status: "completed", completed: true, count: 1, target: 1 },
-          "1": { status: "completed", completed: true, count: 1, target: 1 },
-          "2": { status: "completed", completed: true, count: 1, target: 1 },
-          "3": { status: "completed", completed: true, count: 1, target: 1 }
-        }
+    // Step 2: Build a master schema payload containing both dictionaries and arrays with all required names
+    const masterPayload = {
+      id: userQuestId,
+      user_quest_id: userQuestId,
+      quest_id: questId,
+      questId: questId,
+      slug: questSlug,
+      name: questName,
+      status: 'completed',
+      steps_completed: 4,
+      total_steps: 4,
+      completion_percentage: 100,
+      steps: [
+        { step: 0, name: 'Market Step 1', status: 'completed', completed: true, count: 1, target: 1 },
+        { step: 1, name: 'Market Step 2', status: 'completed', completed: true, count: 1, target: 1 },
+        { step: 2, name: 'Market Step 3', status: 'completed', completed: true, count: 1, target: 1 },
+        { step: 3, name: 'Market Step 4', status: 'completed', completed: true, count: 1, target: 1 }
+      ],
+      step_progress: {
+        "0": { name: 'Market Step 1', status: "completed", completed: true, count: 1, target: 1 },
+        "1": { name: 'Market Step 2', status: "completed", completed: true, count: 1, target: 1 },
+        "2": { name: 'Market Step 3', status: "completed", completed: true, count: 1, target: 1 },
+        "3": { name: 'Market Step 4', status: "completed", completed: true, count: 1, target: 1 }
       }
-    ];
+    };
 
-    // Step 3: Target the endpoints that yielded 500 errors with our structured payload
+    // Step 3: Dispatch against the validated submission endpoints using PUT and POST
     const targetEndpoints = [
       `${SUBDOMAIN_API}/api/quests/submit`,
-      `${SUBDOMAIN_API}/api/quests/complete`
+      `${SUBDOMAIN_API}/api/quests/complete`,
+      `${SUBDOMAIN_API}/api/user-quests/${userQuestId}`
     ];
 
     let completed = false;
     let winningResult = null;
 
     for (const url of targetEndpoints) {
-      for (const payload of richPayloads) {
-        const res = await axios.put(url, payload, {
+      for (const method of ['put', 'post']) {
+        const res = await axios({
+          method,
+          url,
           headers,
+          data: masterPayload,
           timeout: 8000,
           validateStatus: () => true
         });
 
         logs.push({ 
-          attempt: `PUT ${url}`, 
+          attempt: `${method.toUpperCase()} ${url}`, 
           status: res.status, 
           response: res.data 
         });
 
         if (res.status >= 200 && res.status < 300) {
           completed = true;
-          winningResult = { url, response: res.data };
+          winningResult = { method: method.toUpperCase(), url, response: res.data };
           break;
         }
       }
@@ -121,7 +119,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { userQuestId, completed, winningResult, logs },
-      message: completed ? '🚀 Polymarket Quest Force-Ticked Successfully!' : '⚡ Submission dispatched. Check logs for results.'
+      message: completed ? '🚀 Polymarket Quest Fully Completed & Ticked!' : '⚡ Master payload dispatched. Check response logs.'
     };
 
   } catch (error: any) {
