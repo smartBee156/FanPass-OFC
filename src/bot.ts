@@ -24,6 +24,15 @@ function saveAccounts(accounts: Account[]) {
   fs.writeFileSync(filePath, JSON.stringify(accounts, null, 2));
 }
 
+// Helper to safely format and truncate JSON for Telegram
+function formatResponse(data: any): string {
+  const jsonStr = JSON.stringify(data, null, 2);
+  if (jsonStr.length > 3000) {
+    return jsonStr.substring(0, 3000) + '\n... (output truncated for length)';
+  }
+  return jsonStr;
+}
+
 bot.start((ctx) => {
   ctx.reply(
     '🚀 *FanPass Professional Bot Active*\n\n' +
@@ -39,20 +48,21 @@ bot.command('run', async (ctx) => {
     const messageText = ctx.message.text.trim();
     const parts = messageText.split(' ');
     
-    // Case A: User passed a token inline right after /run
+    // Case A: Inline token passed with /run
     if (parts.length > 1) {
       const inlineToken = parts.slice(1).join(' ').trim();
       await ctx.reply('🔍 *Testing inline token against FanPass API...*');
       const result = await pollAccountVerification(inlineToken);
       
       if (result.success) {
-        return ctx.reply(`✅ *Token Valid & Verified!*\n\nResponse:\n\`\`\`json\n${JSON.stringify(result.data, null, 2)}\`\`\``, { parse_mode: 'Markdown' });
+        const safeJson = formatResponse(result.data);
+        return ctx.reply(`✅ *Token Valid & Verified!*\n\nResponse:\n\`\`\`json\n${safeJson}\`\`\``, { parse_mode: 'Markdown' });
       } else {
         return ctx.reply(result.message);
       }
     }
 
-    // Case B: Run against all saved accounts in JSON
+    // Case B: Run against all saved accounts
     const accounts = getAccounts();
     if (accounts.length === 0) {
       return ctx.reply('📂 No accounts saved yet. Paste your token directly into the chat or use `/run <token>`.');
@@ -65,7 +75,8 @@ bot.command('run', async (ctx) => {
       const result = await pollAccountVerification(acc.token);
       
       if (result.success) {
-        await ctx.reply(`✅ *${acc.name} Success!*\n\`\`\`json\n${JSON.stringify(result.data, null, 2)}\`\`\``, { parse_mode: 'Markdown' });
+        const safeJson = formatResponse(result.data);
+        await ctx.reply(`✅ *${acc.name} Success!*\n\`\`\`json\n${safeJson}\`\`\``, { parse_mode: 'Markdown' });
       } else {
         await ctx.reply(`❌ *${acc.name} Failed:* ${result.message}`);
       }
@@ -98,11 +109,11 @@ bot.command('clear', (ctx) => {
   }
 });
 
-// Handle raw text token pasting (saving accounts)
+// Handle raw text token pasting
 bot.on('text', async (ctx) => {
   try {
     const text = ctx.message.text.trim();
-    if (text.startsWith('/')) return; // Ignore any other commands
+    if (text.startsWith('/')) return;
 
     const accounts = getAccounts();
     const name = `Account ${accounts.length + 1}`;
