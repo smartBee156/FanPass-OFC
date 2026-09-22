@@ -39,31 +39,44 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const logs = [];
 
-    // 1. Initialize / Start the quest (Proven 200 OK route)
+    // 1. Initialize / Start the quest
     const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
     const startRes = await axios.post(startUrl, {}, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 2. Loop through all 4 steps (0, 1, 2, 3) using Bolt's discovered progress paths
-    const stepResults = [];
-    for (let stepIndex = 0; stepIndex < 4; stepIndex++) {
-      const stepStartUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/step/${stepIndex}/start`;
-      const stepCompleteUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/step/${stepIndex}/complete`;
+    // 2. Trigger Event Ingestion via Verification Hooks
+    // We target potential verification and proof endpoints uncovered by the frontend scan
+    const verificationEndpoints = [
+      `${BASE_API}/quests/${questId}/verify`,
+      `${BASE_API}/verify/proof`,
+      `${BASE_API}/quests/${questId}/progress/${encodedUser}/verify`,
+      `${BASE_API}/verify/batch/${questId}`
+    ];
 
-      const sStart = await axios.post(stepStartUrl, {}, { headers, validateStatus: () => true });
-      const sComplete = await axios.post(stepCompleteUrl, {}, { headers, validateStatus: () => true });
+    const verifyResults = [];
+    for (const url of verificationEndpoints) {
+      for (const method of ['post', 'put', 'get']) {
+        const vRes = await axios({
+          method,
+          url,
+          headers,
+          data: { questId, user_id: userId, userQuestId: startRes.data?.id },
+          validateStatus: () => true
+        });
 
-      stepResults.push({
-        step: stepIndex,
-        startStatus: sStart.status,
-        completeStatus: sComplete.status,
-        completeResponse: sComplete.data
-      });
+        verifyResults.push({
+          attempt: `${method.toUpperCase()} ${url}`,
+          status: vRes.status,
+          response: vRes.data
+        });
+
+        if (vRes.status >= 200 && vRes.status < 300) break;
+      }
     }
 
-    logs.push({ step: 'STEPS_EXECUTION', results: stepResults });
+    logs.push({ step: 'VERIFICATION_TRIGGER', results: verifyResults });
 
-    // 3. Claim final reward using Bolt's discovered claim path
+    // 3. Attempt to claim reward after triggering verification
     const claimUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`;
     const claimRes = await axios.post(claimUrl, {}, { headers, validateStatus: () => true });
     logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
@@ -73,7 +86,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { userId, questId, logs },
-      message: success ? '🚀 Polymarket Quest Fully Completed & Claimed!' : '⚡ Steps executed on tenant API. Check response logs.'
+      message: success ? '🚀 Polymarket Quest Ingested & Claimed!' : '⚡ Verification triggers dispatched. Check execution logs.'
     };
 
   } catch (error: any) {
