@@ -2,6 +2,19 @@ import axios from 'axios';
 
 const SUBDOMAIN_API = 'https://fanpass.proofchain.co.za';
 
+// Helper to safely extract user ID from the JWT access token
+function extractUserId(token: string): string | null {
+  try {
+    if (!token.startsWith('eyJ')) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+    return payload.sub || payload.user_id || payload.id || payload.uid || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   const token = input.trim();
   const headers: Record<string, string> = {
@@ -22,62 +35,42 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
   const questName = 'Market Debut';
   const questSlug = 'kick-off-with-polymarket-us';
+  
+  // Extract user ID from token dynamically
+  const userId = extractUserId(token);
 
   try {
     const executionLogs = [];
 
-    // Step 1: Initialize / Start the quest to generate your user-quest instance
-    const startEndpoints = [
-      { method: 'get', url: `${SUBDOMAIN_API}/api/quests/${questId}/start` },
-      { method: 'post', url: `${SUBDOMAIN_API}/api/quests/${questId}/start`, data: { questId } },
-      { method: 'get', url: `${SUBDOMAIN_API}/api/quests/${questId}/start/link` }
-    ];
+    // Step 1: Initialize / Start the quest passing the required user_id query parameter
+    const startUrl = userId 
+      ? `${SUBDOMAIN_API}/api/quests/${questId}/start?user_id=${userId}`
+      : `${SUBDOMAIN_API}/api/quests/${questId}/start`;
 
-    let initialized = false;
-    for (const startOp of startEndpoints) {
-      const res = await axios({
-        method: startOp.method,
-        url: startOp.url,
-        headers,
-        data: (startOp as any).data,
-        timeout: 8000,
-        validateStatus: () => true
-      });
+    const startRes = await axios.post(startUrl, { questId }, {
+      headers,
+      timeout: 8000,
+      validateStatus: () => true
+    });
 
-      executionLogs.push({ step: 'START', action: `${startOp.method.toUpperCase()} ${startOp.url}`, status: res.status, response: res.data });
+    executionLogs.push({ step: 'START', url: startUrl, status: startRes.status, response: startRes.data });
 
-      if (res.status >= 200 && res.status < 300) {
-        initialized = true;
-        break;
-      }
-    }
+    // Step 2: Fire the verification force-tick payload
+    const verifyPayload = { id: questId, name: questName, slug: questSlug };
+    const verifyRes = await axios.put(`${SUBDOMAIN_API}/api/quests/verify`, verifyPayload, {
+      headers,
+      timeout: 8000,
+      validateStatus: () => true
+    });
 
-    // Step 2: Fire the verification / completion force-tick payload
-    const verifyPayloads = [
-      { id: questId, name: questName, slug: questSlug },
-      { questId, name: questName }
-    ];
+    executionLogs.push({ step: 'VERIFY', payload: verifyPayload, status: verifyRes.status, response: verifyRes.data });
 
-    let completed = false;
-    for (const payload of verifyPayloads) {
-      const res = await axios.put(`${SUBDOMAIN_API}/api/quests/verify`, payload, {
-        headers,
-        timeout: 8000,
-        validateStatus: () => true
-      });
-
-      executionLogs.push({ step: 'VERIFY', payload, status: res.status, response: res.data });
-
-      if (res.status >= 200 && res.status < 300) {
-        completed = true;
-        break;
-      }
-    }
+    const success = startRes.status >= 200 && startRes.status < 300 && verifyRes.status >= 200 && verifyRes.status < 300;
 
     return {
       success: true,
-      data: { initialized, completed, executionLogs },
-      message: completed ? '🚀 Polymarket Quest Successfully Initialized and Force-Ticked!' : '⚡ Execution completed. Check logs for details.'
+      data: { extractedUserId: userId, executionLogs },
+      message: success ? '🚀 Polymarket Quest Force-Ticked Successfully!' : '⚡ Execution complete. Check logs for details.'
     };
 
   } catch (error: any) {
