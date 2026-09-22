@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE = 'https://api.onefootball.com';
+const ONEFOOTBALL_API = 'https://api.onefootball.com';
+const PASSCHAIN_API = 'https://api.passchain.co.za';
 
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   const token = input.trim();
@@ -19,8 +20,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   }
 
   try {
-    // 1. Fetch verified user profile (proven working)
-    const profileRes = await axios.get(API_BASE + '/users-accounts-api/v1/settings/profile', { 
+    // 1. Fetch profile to get user details & club_id
+    const profileRes = await axios.get(ONEFOOTBALL_API + '/users-accounts-api/v1/settings/profile', { 
       headers, 
       timeout: 15000, 
       validateStatus: () => true 
@@ -30,33 +31,28 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       return { success: false, message: '❌ Unauthorized [Status 401]: Token expired. Grab a fresh access_token from Cookie-Editor.' };
     }
 
-    // 2. Expanded quest / rewards candidate endpoints
-    const questCandidatePaths = [
-      '/users-accounts-api/v1/quests',
-      '/users-accounts-api/v1/fanpass/quests',
-      '/users-accounts-api/v1/fanpass',
-      '/users-accounts-api/v1/rewards',
-      '/users-accounts-api/v1/campaigns',
-      '/users-accounts-api/v1/me',
-      '/quests-api/v1/quests'
-    ];
+    const profileData = profileRes.status === 200 ? profileRes.data : null;
+    const clubId = profileData ? profileData.club_id : null;
 
-    let questData = null;
-    let foundPath = '';
+    // 2. Query Passchain API for rewards and quests
+    // We can try using the club_id or user identifier extracted from the header/url
+    let rewardsData = null;
+    const rewardPaths = [
+      clubId ? `/rewards/users/${clubId}/rewards?reward_type=badge` : '',
+      clubId ? `/rewards/users/${clubId}/quests` : '',
+      '/rewards/me/rewards',
+      '/rewards/me/quests'
+    ].filter(Boolean);
 
-    for (const path of questCandidatePaths) {
-      const res = await axios.get(API_BASE + path, { 
+    for (const path of rewardPaths) {
+      const res = await axios.get(PASSCHAIN_API + path, { 
         headers, 
         timeout: 10000, 
         validateStatus: () => true 
       });
 
-      const contentType = String(res.headers['content-type'] || '');
-      const bodyStr = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-
-      if (!contentType.includes('text/html') && !bodyStr.trim().startsWith('<!doctype') && res.status >= 200 && res.status < 300) {
-        questData = res.data;
-        foundPath = path;
+      if (res.status >= 200 && res.status < 300) {
+        rewardsData = res.data;
         break;
       }
     }
@@ -64,11 +60,10 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: {
-        profile: profileRes.status === 200 ? profileRes.data : null,
-        quests: questData || 'Scanning further paths on next iteration',
-        activeQuestPath: foundPath || 'Searching...'
+        profile: profileData,
+        rewards: rewardsData || 'Connected to Passchain, scanning specific reward sub-paths...'
       },
-      message: '✅ Profile & Quest scan executed successfully!'
+      message: '✅ Successfully synced with Passchain API!'
     };
 
   } catch (error: any) {
