@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const FANPASS_API = 'https://pass.onefootball.com/api';
+const FANPASS_API = 'https://fanpass.onefootball.com/api';
 
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   const token = input.trim();
