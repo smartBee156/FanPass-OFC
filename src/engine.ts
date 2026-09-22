@@ -2,7 +2,6 @@ import axios from 'axios';
 
 const SUBDOMAIN_API = 'https://fanpass.proofchain.co.za';
 
-// Helper to safely extract user ID from the JWT access token
 function extractUserId(token: string): string | null {
   try {
     if (!token.startsWith('eyJ')) return null;
@@ -33,16 +32,12 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   }
 
   const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
-  const questName = 'Market Debut';
-  const questSlug = 'kick-off-with-polymarket-us';
-  
-  // Extract user ID from token dynamically
   const userId = extractUserId(token);
 
   try {
-    const executionLogs = [];
+    const logs = [];
 
-    // Step 1: Initialize / Start the quest passing the required user_id query parameter
+    // Step 1: Ensure quest instance is started and get the user-quest tracking ID
     const startUrl = userId 
       ? `${SUBDOMAIN_API}/api/quests/${questId}/start?user_id=${userId}`
       : `${SUBDOMAIN_API}/api/quests/${questId}/start`;
@@ -53,24 +48,41 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       validateStatus: () => true
     });
 
-    executionLogs.push({ step: 'START', url: startUrl, status: startRes.status, response: startRes.data });
+    logs.push({ step: 'START', status: startRes.status, response: startRes.data });
 
-    // Step 2: Fire the verification force-tick payload
-    const verifyPayload = { id: questId, name: questName, slug: questSlug };
-    const verifyRes = await axios.put(`${SUBDOMAIN_API}/api/quests/verify`, verifyPayload, {
-      headers,
-      timeout: 8000,
-      validateStatus: () => true
-    });
+    const userQuestId = startRes.data?.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
 
-    executionLogs.push({ step: 'VERIFY', payload: verifyPayload, status: verifyRes.status, response: verifyRes.data });
+    // Step 2: Target the user-quest instance routes to push steps to completion (4/4 steps)
+    const completionEndpoints = [
+      { method: 'put', url: `${SUBDOMAIN_API}/api/user-quests/${userQuestId}`, data: { steps_completed: 4, completion_percentage: 100, status: 'completed' } },
+      { method: 'post', url: `${SUBDOMAIN_API}/api/user-quests/${userQuestId}/complete`, data: { steps_completed: 4 } },
+      { method: 'post', url: `${SUBDOMAIN_API}/api/quests/${questId}/verify`, data: { user_quest_id: userQuestId, steps_completed: 4 } },
+      { method: 'put', url: `${SUBDOMAIN_API}/api/quests/verify`, data: { questId, user_quest_id: userQuestId, status: 'completed' } }
+    ];
 
-    const success = startRes.status >= 200 && startRes.status < 300 && verifyRes.status >= 200 && verifyRes.status < 300;
+    let completed = false;
+    for (const endpoint of completionEndpoints) {
+      const res = await axios({
+        method: endpoint.method,
+        url: endpoint.url,
+        headers,
+        data: endpoint.data,
+        timeout: 8000,
+        validateStatus: () => true
+      });
+
+      logs.push({ step: 'COMPLETE_ATTEMPT', url: endpoint.url, status: res.status, response: res.data });
+
+      if (res.status >= 200 && res.status < 300) {
+        completed = true;
+        break;
+      }
+    }
 
     return {
       success: true,
-      data: { extractedUserId: userId, executionLogs },
-      message: success ? '🚀 Polymarket Quest Force-Ticked Successfully!' : '⚡ Execution complete. Check logs for details.'
+      data: { userQuestId, completed, logs },
+      message: completed ? '🚀 Polymarket Quest Fully Completed & Ticked!' : '⚡ Quest started. Check completion logs.'
     };
 
   } catch (error: any) {
