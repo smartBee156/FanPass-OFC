@@ -1,118 +1,104 @@
-import { Telegraf } from 'telegraf';
-import fs from 'fs';
-import path from 'path';
-import { pollAccountVerification } from './engine';
+import axios from 'axios';
 
-const bot = new Telegraf(process.env.TG_BOT_TOKEN!);
-const filePath = path.join(__dirname, 'accounts.json');
+const SUBDOMAIN_API = 'https://fanpass.proofchain.co.za';
 
-interface Account {
-  name: string;
-  token: string;
-}
-
-function getAccounts(): Account[] {
-  if (!fs.existsSync(filePath)) return [];
+function extractUserId(token: string): string | null {
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  } catch {
-    return [];
+    if (!token.startsWith('eyJ')) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+    return payload.sub || payload.user_id || payload.id || payload.uid || null;
+  } catch (e) {
+    return null;
   }
 }
 
-function saveAccounts(accounts: Account[]) {
-  fs.writeFileSync(filePath, JSON.stringify(accounts, null, 2));
-}
+export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
+  const token = input.trim();
+  const headers: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Origin': 'https://fanpass.onefootball.com',
+    'Referer': 'https://fanpass.onefootball.com/',
+    'X-Tenant-ID': 'tenant_1g6k1cew859ls7408',
+    'Content-Type': 'application/json'
+  };
 
-// Bulletproof multi-chunk reply helper that handles Telegram's 4096 character limit gracefully
-async function safeReply(ctx: any, text: string) {
-  try {
-    const MAX_LENGTH = 4000;
-    if (text.length <= MAX_LENGTH) {
-      await ctx.reply(text);
-      return;
-    }
-
-    // Automatically split long outputs into sequential chunks without truncation
-    for (let i = 0; i < text.length; i += MAX_LENGTH) {
-      const chunk = text.substring(i, i + MAX_LENGTH);
-      await ctx.reply(chunk);
-    }
-  } catch (err: any) {
-    console.error('Telegram reply error:', err.message);
+  if (token.startsWith('eyJ')) {
+    headers['Authorization'] = 'Bearer ' + token;
+  } else {
+    headers['Cookie'] = token;
   }
-}
 
-bot.start((ctx) => {
-  safeReply(ctx, '🚀 FanPass Professional Bot Active\n\n• Paste your access_token directly to save an account.\n• Type /run to test all saved accounts.\n• Type /list to view saved accounts.');
-});
+  const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
+  const questName = 'Market Debut';
+  const questSlug = 'kick-off-with-polymarket-us';
+  const userId = extractUserId(token);
 
-// Handle /run command
-bot.command('run', async (ctx) => {
   try {
-    const accounts = getAccounts();
-    if (accounts.length === 0) {
-      return safeReply(ctx, '📂 No accounts saved yet. Paste your access_token directly into the chat.');
-    }
+    const logs = [];
 
-    await safeReply(ctx, '🔍 Testing ' + accounts.length + ' saved account(s) against FanPass API...');
+    // Step 1: Start / Initialize user quest instance
+    const startUrl = userId 
+      ? `${SUBDOMAIN_API}/api/quests/${questId}/start?user_id=${userId}`
+      : `${SUBDOMAIN_API}/api/quests/${questId}/start`;
 
-    for (const acc of accounts) {
-      await safeReply(ctx, '[*] Checking ' + acc.name + '...');
-      const result = await pollAccountVerification(acc.token);
-      
-      if (result.success) {
-        const jsonString = JSON.stringify(result.data, null, 2);
-        const msg = '✅ ' + acc.name + ' Success!\n\nAPI Response Snippet:\n' + jsonString;
-        await safeReply(ctx, msg);
-      } else {
-        await safeReply(ctx, '❌ ' + acc.name + ' Failed: ' + result.message);
+    const startRes = await axios.post(startUrl, { questId }, {
+      headers,
+      timeout: 8000,
+      validateStatus: () => true
+    });
+
+    logs.push({ step: 'START', status: startRes.status, response: startRes.data });
+
+    const userQuestId = startRes.data?.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
+
+    // Step 2: Fire complete verification payload containing the required name and user_quest_id
+    const verificationEndpoints = [
+      { method: 'put', url: `${SUBDOMAIN_API}/api/quests/verify` },
+      { method: 'patch', url: `${SUBDOMAIN_API}/api/quests/verify` },
+      { method: 'put', url: `${SUBDOMAIN_API}/api/user-quests/${userQuestId}` },
+      { method: 'patch', url: `${SUBDOMAIN_API}/api/user-quests/${userQuestId}` }
+    ];
+
+    const payload = {
+      questId,
+      id: questId,
+      slug: questSlug,
+      name: questName,
+      user_quest_id: userQuestId,
+      steps_completed: 4,
+      completion_percentage: 100,
+      status: 'completed'
+    };
+
+    let completed = false;
+    for (const ep of verificationEndpoints) {
+      const res = await axios({
+        method: ep.method,
+        url: ep.url,
+        headers,
+        data: payload,
+        timeout: 8000,
+        validateStatus: () => true
+      });
+
+      logs.push({ step: 'VERIFY_ATTEMPT', method: ep.method.toUpperCase(), url: ep.url, status: res.status, response: res.data });
+
+      if (res.status >= 200 && res.status < 300) {
+        completed = true;
+        break;
       }
     }
-  } catch (err: any) {
-    await safeReply(ctx, '⚠️ Critical Error: ' + err.message);
+
+    return {
+      success: true,
+      data: { userQuestId, completed, logs },
+      message: completed ? '🚀 Polymarket Quest Fully Completed & Ticked!' : '⚡ Instance active. Check verification logs.'
+    };
+
+  } catch (error: any) {
+    return { success: false, message: '❌ Error: ' + error.message };
   }
-});
-
-// Handle listing saved accounts
-bot.command('list', (ctx) => {
-  try {
-    const accounts = getAccounts();
-    if (accounts.length === 0) return safeReply(ctx, '📂 No accounts saved yet.');
-
-    const list = accounts.map((acc, index) => (index + 1) + '. ' + acc.name).join('\n');
-    safeReply(ctx, '📋 Saved Accounts (' + accounts.length + '):\n\n' + list);
-  } catch (err: any) {
-    safeReply(ctx, '⚠️ Error: ' + err.message);
-  }
-});
-
-// Handle clearing accounts
-bot.command('clear', (ctx) => {
-  try {
-    saveAccounts([]);
-    safeReply(ctx, '🗑️ All saved accounts cleared.');
-  } catch (err: any) {
-    safeReply(ctx, '⚠️ Error: ' + err.message);
-  }
-});
-
-// Handle text token pasting
-bot.on('text', async (ctx) => {
-  try {
-    const text = ctx.message.text.trim();
-    if (text.startsWith('/')) return;
-
-    const accounts = getAccounts();
-    const name = 'Account ' + (accounts.length + 1);
-
-    accounts.push({ name, token: text });
-    saveAccounts(accounts);
-
-    safeReply(ctx, '✅ ' + name + ' saved successfully!\n\nType /run now to test your accounts.');
-  } catch (err: any) {
-    safeReply(ctx, '⚠️ Error saving account: ' + err.message);
-  }
-});
-
-bot.launch();
+}
