@@ -33,29 +33,28 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       const res = await axios.get(url, { 
         headers, 
         timeout: 10000, 
-        validateStatus: () => true // Allow handling 4xx/5xx without throwing
+        validateStatus: () => true 
       });
       
-      const contentType = res.headers['content-type'] || '';
+      const contentType = String(res.headers['content-type'] || '');
       const bodyStr = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
       
-      // Skip if it returned HTML (SPA fallback page)
       if (contentType.includes('text/html') || bodyStr.trim().startsWith('<!doctype') || bodyStr.trim().startsWith('<html')) {
         continue; 
       }
 
       if (res.status >= 200 && res.status < 300) {
-        return { success: true, data: res.data, message: `✅ Connected successfully via ${path}!` };
+        return { success: true, data: res.data, message: '✅ Connected successfully via ' + path + '!' };
       } else if (res.status === 401 || res.status === 403) {
-        return { success: false, message: `❌ Unauthorized [Status ${res.status}] on ${path}: Token is invalid or expired.` };
+        return { success: false, message: '❌ Unauthorized [Status ' + res.status + '] on ' + path + ': Token is invalid or expired.' };
       }
     } catch (err: any) {
-      // Ignore and try next path
+      // Skip error and try next path
     }
   }
 
   return { 
     success: false, 
-    message: '❌ All candidate endpoints returned HTML pages. Tip: Open your mobile browser Network tab while on FanPass to see the exact API URL being called.' 
+    message: '❌ All candidate endpoints returned HTML pages.' 
   };
 }
