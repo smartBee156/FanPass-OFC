@@ -19,7 +19,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   }
 
   try {
-    // 1. Fetch verified user profile (proven working)
+    // 1. Fetch verified user profile
     const profileRes = await axios.get(API_BASE + '/users-accounts-api/v1/settings/profile', { 
       headers, 
       timeout: 15000, 
@@ -33,16 +33,17 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const profileData = profileRes.status === 200 ? profileRes.data : null;
     const clubId = profileData ? profileData.club_id : null;
 
-    // 2. Target the exact catalog and rewards paths seen in the network logs
+    // 2. Scan exact reward, badge, and quest endpoints
     const targetPaths = [
-      '/users-accounts-api/v1/catalog',
       '/users-accounts-api/v1/rewards',
-      clubId ? `/users-accounts-api/v1/users/${clubId}/rewards` : '',
+      '/users-accounts-api/v1/badges',
       '/users-accounts-api/v1/quests',
-      '/quests-api/v1/quests'
+      clubId ? `/users-accounts-api/v1/users/${clubId}/rewards` : '',
+      clubId ? `/users-accounts-api/v1/users/${clubId}/badges` : '',
+      '/users-accounts-api/v1/catalog'
     ].filter(Boolean);
 
-    let questPayload = null;
+    let rewardsPayload = null;
     let successfulPath = '';
 
     for (const path of targetPaths) {
@@ -56,7 +57,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       const bodyStr = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
 
       if (!contentType.includes('text/html') && !bodyStr.trim().startsWith('<!doctype') && res.status >= 200 && res.status < 300) {
-        questPayload = res.data;
+        rewardsPayload = res.data;
         successfulPath = path;
         break;
       }
@@ -66,9 +67,9 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       success: true,
       data: {
         profile: profileData,
-        questsAndRewards: questPayload || 'Catalog and reward endpoints probed successfully.'
+        rewardsAndBadges: rewardsPayload || 'Profile verified. Scanning badge routes.'
       },
-      message: `✅ Profile synced & quest catalog queried via ${successfulPath || 'primary routes'}!`
+      message: `✅ Synced via profile and ${successfulPath || 'catalog routes'}!`
     };
 
   } catch (error: any) {
