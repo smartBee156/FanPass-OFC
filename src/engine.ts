@@ -20,32 +20,29 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   }
 
   const polymarketQuestId = '81ff3b8a-03bf-488c-828c-f60923e96149';
+  const polymarketSlug = 'kick-off-with-polymarket-us';
 
-  // Test alternative HTTP methods (GET, PUT) and query parameters for verification routes
-  const actions = [
-    { method: 'get', url: `${SUBDOMAIN_API}/api/quests/${polymarketQuestId}/verify` },
-    { method: 'put', url: `${SUBDOMAIN_API}/api/quests/${polymarketQuestId}/verify` },
-    { method: 'get', url: `${SUBDOMAIN_API}/api/quests/verify`, params: { questId: polymarketQuestId } },
-    { method: 'put', url: `${SUBDOMAIN_API}/api/quests/verify`, data: { questId: polymarketQuestId } },
-    { method: 'get', url: `${SUBDOMAIN_API}/api/quests/${polymarketQuestId}/start/link` }
+  // Test different schema key formats to find what the 422 validator expects
+  const payloadsToTest = [
+    { questId: polymarketQuestId },
+    { id: polymarketQuestId },
+    { slug: polymarketSlug },
+    { quest_id: polymarketQuestId },
+    { questId: polymarketQuestId, slug: polymarketSlug }
   ];
 
-  const probeResults = [];
+  const results = [];
 
-  for (const action of actions) {
+  for (const payload of payloadsToTest) {
     try {
-      const res = await axios({
-        method: action.method,
-        url: action.url,
+      const res = await axios.put(`${SUBDOMAIN_API}/api/quests/verify`, payload, {
         headers,
-        params: (action as any).params,
-        data: (action as any).data,
         timeout: 10000,
         validateStatus: () => true
       });
 
-      probeResults.push({
-        action: `${action.method.toUpperCase()} ${action.url}`,
+      results.push({
+        payload,
         status: res.status,
         response: res.data
       });
@@ -53,18 +50,18 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       if (res.status >= 200 && res.status < 300) {
         return {
           success: true,
-          data: { winningAction: action, response: res.data },
-          message: `🚀 Polymarket Quest Ticked Successfully via ${action.method.toUpperCase()}!`
+          data: { winningPayload: payload, response: res.data },
+          message: `🚀 Polymarket Quest Force-Ticked Successfully via PUT!`
         };
       }
     } catch (err: any) {
-      probeResults.push({ action: action.url, error: err.message });
+      results.push({ payload, error: err.message });
     }
   }
 
   return {
     success: true,
-    data: { probeResults },
-    message: '⚡ Method audit complete. Check response snippet.'
+    data: { results },
+    message: '⚡ Schema Resolution Audit Complete. Check response snippet.'
   };
 }
