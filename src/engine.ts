@@ -1,84 +1,70 @@
 import axios from 'axios';
 
-const PROOFCHAIN_API = 'https://api.proofchain.co.za';
+const SUBDOMAIN_API = 'https://fanpass.proofchain.co.za';
 
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   const token = input.trim();
-  const baseHeaders: Record<string, string> = {
+  const headers: Record<string, string> = {
     'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
     'Origin': 'https://fanpass.onefootball.com',
-    'Referer': 'https://fanpass.onefootball.com/'
+    'Referer': 'https://fanpass.onefootball.com/',
+    'X-Tenant-ID': 'tenant_1g6k1cew859ls7408'
   };
 
   if (token.startsWith('eyJ')) {
-    baseHeaders['Authorization'] = 'Bearer ' + token;
+    headers['Authorization'] = 'Bearer ' + token;
   } else {
-    baseHeaders['Cookie'] = token;
+    headers['Cookie'] = token;
   }
 
-  // Test different ways the backend might expect the tenant context
-  const testVariations = [
-    {
-      name: 'Query Param Variant',
-      headers: { ...baseHeaders },
-      params: { tenant: 'fanpass', tenant_id: 'tenant_1g6k1cew859ls7408' }
-    },
-    {
-      name: 'Alternative Header Keys Variant',
-      headers: { 
-        ...baseHeaders, 
-        'X-Tenant': 'fanpass', 
-        'X-Tenant-Slug': 'fanpass',
-        'X-Tenant-ID': 'tenant_1g6k1cew859ls7408'
-      },
-      params: {}
-    },
-    {
-      name: 'Host/Origin Override Variant',
-      headers: { 
-        ...baseHeaders, 
-        'X-Tenant-ID': 'tenant_1g6k1cew859ls7408',
-        'X-Forwarded-Host': 'fanpass.proofchain.co.za'
-      },
-      params: {}
-    }
+  // Probe API routes directly on the tenant subdomain
+  const candidateEndpoints = [
+    '/api/quests',
+    '/v1/quests',
+    '/api/v1/quests',
+    '/quests',
+    '/backend/quests'
   ];
 
-  const results: Record<string, any> = {};
+  const probeResults: Record<string, any> = {};
 
-  for (const variation of testVariations) {
+  for (const endpoint of candidateEndpoints) {
     try {
-      const res = await axios.get(`${PROOFCHAIN_API}/quests`, { 
-        headers: variation.headers,
-        params: variation.params,
+      const res = await axios.get(`${SUBDOMAIN_API}${endpoint}`, { 
+        headers, 
         timeout: 10000, 
         validateStatus: () => true 
       });
 
-      results[variation.name] = {
+      const contentType = res.headers['content-type'] || '';
+      
+      probeResults[endpoint] = {
         status: res.status,
-        data: res.data
+        contentType,
+        // If it's JSON, show the data; if it's HTML, summarize it so we don't spam chat
+        data: contentType.includes('application/json') ? res.data : '[HTML Frontend Response]'
       };
 
-      if (res.status === 200) {
+      // If we find an endpoint returning JSON with a 200 OK status
+      if (res.status === 200 && contentType.includes('application/json')) {
         return {
           success: true,
           data: {
-            winningVariation: variation.name,
+            endpoint,
             payload: res.data
           },
-          message: `✅ Tenant Context Unlocked via [${variation.name}]!`
+          message: `✅ Subdomain API Unlocked at [${endpoint}]!`
         };
       }
     } catch (err: any) {
-      results[variation.name] = { error: err.message };
+      probeResults[endpoint] = { error: err.message };
     }
   }
 
   return {
     success: true,
-    data: results,
-    message: '✅ Tenant Variation Audit Complete.'
+    data: probeResults,
+    message: '✅ Subdomain API Route Probe Complete.'
   };
 }
