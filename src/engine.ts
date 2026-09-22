@@ -1,25 +1,14 @@
 import axios from 'axios';
 import https from 'https';
-import dns from 'dns';
 
-// Robust lookup handler to safely catch variable argument signatures in Node.js agents
-const passchainAgent = new https.Agent({
-  lookup: (hostname: string, options: any, callback: any) => {
-    if (typeof options === 'function') {
-      callback = options;
-      options = {};
-    }
-    if (hostname === 'api.passchain.co.za') {
-      callback(null, '104.26.3.64', 4);
-    } else {
-      dns.lookup(hostname, options, callback);
-    }
-  }
+// Bypass DNS resolution entirely by hitting Cloudflare's IP directly with a custom insecure agent
+const insecureAgent = new https.Agent({
+  rejectUnauthorized: false
 });
 
-const passchainClient = axios.create({
-  baseURL: 'https://api.passchain.co.za',
-  httpsAgent: passchainAgent,
+const directClient = axios.create({
+  baseURL: 'https://104.26.3.64',
+  httpsAgent: insecureAgent,
   validateStatus: () => true,
   timeout: 15000
 });
@@ -27,6 +16,7 @@ const passchainClient = axios.create({
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   const token = input.trim();
   const headers: Record<string, string> = {
+    'Host': 'api.passchain.co.za', // Crucial for Cloudflare virtual host routing
     'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
     'Origin': 'https://fanpass.onefootball.com',
@@ -41,7 +31,9 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
   try {
     const questId = "de5a250f-233e-4cb7-8de1-273a437d420d";
-    const res = await passchainClient.get(`/quests/${questId}/start/link`, { headers });
+    
+    // Hits https://104.26.3.64/quests/... with Host: api.passchain.co.za
+    const res = await directClient.get(`/quests/${questId}/start/link`, { headers });
 
     return {
       success: true,
@@ -49,10 +41,10 @@ export async function pollAccountVerification(input: string): Promise<{ success:
         statusCode: res.status,
         payload: res.data
       },
-      message: `✅ Passchain Backend Triggered [Status ${res.status}]!`
+      message: `✅ Passchain Direct IP Triggered [Status ${res.status}]!`
     };
 
   } catch (error: any) {
-    return { success: false, message: '❌ Network Error: ' + error.message };
+    return { success: false, message: '❌ Direct IP Network Error: ' + error.message };
   }
 }
