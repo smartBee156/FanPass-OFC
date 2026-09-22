@@ -15,28 +15,28 @@ function extractUserId(token: string): string | null {
 }
 
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
-  const token = input.trim();
-  const headers: Record<string, string> = {
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
-    'Accept': 'application/json, text/plain, */*',
-    'Origin': 'https://fanpass.onefootball.com',
-    'Referer': 'https://fanpass.onefootball.com/',
-    'X-Tenant-ID': 'tenant_1g6k1cew859ls7408',
-    'Content-Type': 'application/json'
-  };
-
-  if (token.startsWith('eyJ')) {
-    headers['Authorization'] = 'Bearer ' + token;
-  } else {
-    headers['Cookie'] = token;
-  }
-
-  const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
-  const questName = 'Market Debut';
-  const questSlug = 'kick-off-with-polymarket-us';
-  const userId = extractUserId(token);
-
   try {
+    const token = input.trim();
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
+      'Accept': 'application/json, text/plain, */*',
+      'Origin': 'https://fanpass.onefootball.com',
+      'Referer': 'https://fanpass.onefootball.com/',
+      'X-Tenant-ID': 'tenant_1g6k1cew859ls7408',
+      'Content-Type': 'application/json'
+    };
+
+    if (token.startsWith('eyJ')) {
+      headers['Authorization'] = 'Bearer ' + token;
+    } else {
+      headers['Cookie'] = token;
+    }
+
+    const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
+    const questName = 'Market Debut';
+    const questSlug = 'kick-off-with-polymarket-us';
+    const userId = extractUserId(token);
+
     const logs = [];
 
     // Step 1: Start / Initialize user quest instance
@@ -54,51 +54,67 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const userQuestId = startRes.data?.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
 
-    // Step 2: Fire complete verification payload containing the required name and user_quest_id
-    const verificationEndpoints = [
-      { method: 'put', url: `${SUBDOMAIN_API}/api/quests/verify` },
-      { method: 'patch', url: `${SUBDOMAIN_API}/api/quests/verify` },
-      { method: 'put', url: `${SUBDOMAIN_API}/api/user-quests/${userQuestId}` },
-      { method: 'patch', url: `${SUBDOMAIN_API}/api/user-quests/${userQuestId}` }
-    ];
+    // Step 2: Advance pending steps (1, 2, 3) individually to prevent backend 500 crashes
+    const stepTargetIndices = [1, 2, 3];
+    const stepResults = [];
 
-    const payload = {
-      questId,
+    for (const stepIndex of stepTargetIndices) {
+      const stepEndpoints = [
+        `${SUBDOMAIN_API}/api/user-quests/${userQuestId}/steps/${stepIndex}/complete`,
+        `${SUBDOMAIN_API}/api/user-quests/${userQuestId}/step/${stepIndex}`,
+        `${SUBDOMAIN_API}/api/quests/${questId}/steps/${stepIndex}/verify`
+      ];
+
+      let stepDone = false;
+      for (const ep of stepEndpoints) {
+        const res = await axios.post(ep, { step: stepIndex, status: 'completed' }, {
+          headers,
+          timeout: 6000,
+          validateStatus: () => true
+        });
+
+        if (res.status >= 200 && res.status < 300) {
+          stepDone = true;
+          stepResults.push({ step: stepIndex, endpoint: ep, status: res.status, response: res.data });
+          break;
+        }
+      }
+      if (!stepDone) {
+        stepResults.push({ step: stepIndex, status: 'skipped_or_failed' });
+      }
+    }
+
+    logs.push({ step: 'STEP_PROGRESSIONS', results: stepResults });
+
+    // Step 3: Final completion trigger
+    const finalRes = await axios.post(`${SUBDOMAIN_API}/api/quests/verify`, {
       id: questId,
+      questId: questId,
       slug: questSlug,
       name: questName,
       user_quest_id: userQuestId,
-      steps_completed: 4,
-      completion_percentage: 100,
       status: 'completed'
-    };
+    }, {
+      headers,
+      timeout: 8000,
+      validateStatus: () => true
+    });
 
-    let completed = false;
-    for (const ep of verificationEndpoints) {
-      const res = await axios({
-        method: ep.method,
-        url: ep.url,
-        headers,
-        data: payload,
-        timeout: 8000,
-        validateStatus: () => true
-      });
+    logs.push({ step: 'FINAL_VERIFY', status: finalRes.status, response: finalRes.data });
 
-      logs.push({ step: 'VERIFY_ATTEMPT', method: ep.method.toUpperCase(), url: ep.url, status: res.status, response: res.data });
-
-      if (res.status >= 200 && res.status < 300) {
-        completed = true;
-        break;
-      }
-    }
+    const completed = finalRes.status >= 200 && finalRes.status < 300;
 
     return {
       success: true,
       data: { userQuestId, completed, logs },
-      message: completed ? '🚀 Polymarket Quest Fully Completed & Ticked!' : '⚡ Instance active. Check verification logs.'
+      message: completed ? '🚀 Polymarket Quest Fully Ticked!' : '⚡ Steps processed. Check logs for details.'
     };
 
   } catch (error: any) {
-    return { success: false, message: '❌ Error: ' + error.message };
+    return { 
+      success: false, 
+      data: { error: error.message },
+      message: '❌ Engine Error: ' + error.message 
+    };
   }
 }
