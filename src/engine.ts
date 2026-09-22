@@ -18,51 +18,55 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     headers['Cookie'] = token;
   }
 
-  const candidateEndpoints = [
-    '/api/quests',
-    '/v1/quests',
-    '/api/v1/quests',
-    '/quests',
-    '/backend/quests'
-  ];
+  try {
+    // Step 1: Fetch the live list of quests using the verified endpoint
+    const listRes = await axios.get(`${SUBDOMAIN_API}/api/quests`, { 
+      headers, 
+      timeout: 15000, 
+      validateStatus: () => true 
+    });
 
-  const probeResults: Record<string, any> = {};
-
-  for (const endpoint of candidateEndpoints) {
-    try {
-      const res = await axios.get(`${SUBDOMAIN_API}${endpoint}`, { 
-        headers, 
-        timeout: 10000, 
-        validateStatus: () => true 
-      });
-
-      // Explicitly cast to string to satisfy TypeScript strict typing
-      const contentType = String(res.headers['content-type'] || '');
-      
-      probeResults[endpoint] = {
-        status: res.status,
-        contentType,
-        data: contentType.includes('application/json') ? res.data : '[HTML Frontend Response]'
+    if (listRes.status !== 200 || !Array.isArray(listRes.data)) {
+      return {
+        success: false,
+        message: `⚠️ Failed to fetch quests [Status ${listRes.status}]`
       };
-
-      if (res.status === 200 && contentType.includes('application/json')) {
-        return {
-          success: true,
-          data: {
-            endpoint,
-            payload: res.data
-          },
-          message: `✅ Subdomain API Unlocked at [${endpoint}]!`
-        };
-      }
-    } catch (err: any) {
-      probeResults[endpoint] = { error: err.message };
     }
-  }
 
-  return {
-    success: true,
-    data: probeResults,
-    message: '✅ Subdomain API Route Probe Complete.'
-  };
+    const quests = listRes.data;
+    const executionResults = [];
+
+    // Step 2: Automatically loop through each live quest and trigger its start/link route
+    for (const quest of quests) {
+      const questId = quest.id;
+      const questName = quest.name || 'Quest Task';
+      
+      if (questId) {
+        const triggerRes = await axios.get(`${SUBDOMAIN_API}/api/quests/${questId}/start/link`, { 
+          headers, 
+          timeout: 10000, 
+          validateStatus: () => true 
+        });
+
+        executionResults.push({
+          questId,
+          questName,
+          status: triggerRes.status,
+          response: triggerRes.data
+        });
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        totalQuestsProcessed: quests.length,
+        results: executionResults
+      },
+      message: `✅ Successfully automated ${quests.length} active quests!`
+    };
+
+  } catch (error: any) {
+    return { success: false, message: '❌ Automation Error: ' + error.message };
+  }
 }
