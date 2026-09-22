@@ -20,31 +20,29 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   }
 
   try {
-    // Step 1: Dynamically pull the active quest list for this specific account
-    const listRes = await axios.get(`${PROOFCHAIN_API}/quests`, { 
-      headers, 
-      timeout: 15000, 
-      validateStatus: () => true 
-    });
+    let quests: any[] = [];
 
-    if (listRes.status !== 200) {
-      return {
-        success: false,
-        message: `⚠️ Quest list fetch failed [Status ${listRes.status}]`
-      };
+    // Try fetching available quests from standard sub-routes
+    const candidatePaths = ['/quests/available', '/quests', '/api/quests'];
+    for (const path of candidatePaths) {
+      const res = await axios.get(`${PROOFCHAIN_API}${path}`, { 
+        headers, 
+        timeout: 10000, 
+        validateStatus: () => true 
+      });
+
+      if (res.status === 200 && res.data) {
+        quests = Array.isArray(res.data) ? res.data : (res.data.quests || res.data.data || []);
+        if (quests.length > 0) break;
+      }
     }
 
-    const quests = Array.isArray(listRes.data) ? listRes.data : (listRes.data.quests || listRes.data.data || []);
-
+    // If listing didn't return active items, fallback directly to the known Polymarket quest ID
     if (quests.length === 0) {
-      return {
-        success: true,
-        data: listRes.data,
-        message: '✅ Connected successfully! No active quests found on this account.'
-      };
+      quests = [{ id: 'de5a250f-233e-4cb7-8de1-273a437d420d', title: 'Polymarket Quest' }];
     }
 
-    // Step 2: Automatically loop through and trigger/verify every active quest found
+    // Trigger each quest completion/start link
     const questResults = [];
     for (const quest of quests) {
       const questId = quest.id || quest.quest_id;
@@ -66,10 +64,10 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: {
-        totalQuestsFound: quests.length,
+        processedCount: questResults.length,
         results: questResults
       },
-      message: `✅ Processed ${quests.length} active quests dynamically!`
+      message: `✅ Successfully processed quests for account!`
     };
 
   } catch (error: any) {
