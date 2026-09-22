@@ -19,7 +19,6 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   }
 
   try {
-    // Fetch the live list of quests to inspect the full object schema for Polymarket
     const res = await axios.get(`${SUBDOMAIN_API}/api/quests`, { 
       headers, 
       timeout: 15000, 
@@ -27,33 +26,33 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     });
 
     if (res.status !== 200 || !Array.isArray(res.data)) {
-      return {
-        success: false,
-        message: `⚠️ Failed to fetch quest list [Status ${res.status}]`
-      };
+      return { success: false, message: `⚠️ Failed [Status ${res.status}]` };
     }
 
-    // Find the Polymarket quest specifically
     const polyQuest = res.data.find((q: any) => 
       q.id === '81ff3b8a-03bf-488c-828c-f60923e96149' || 
-      (q.slug && q.slug.includes('polymarket')) ||
-      (q.name && q.name.toLowerCase().includes('market debut'))
+      (q.slug && q.slug.includes('polymarket'))
     );
 
     if (!polyQuest) {
-      return {
-        success: true,
-        data: { allQuestsCount: res.data.length },
-        message: '⚠️ Polymarket quest not found in active list. Check raw payload.'
-      };
+      return { success: true, message: '⚠️ Polymarket quest not found in active list.' };
     }
+
+    // Strip out heavy HTML fields and isolate the keys that matter for progression
+    const sanitizedData = {
+      id: polyQuest.id,
+      name: polyQuest.name,
+      slug: polyQuest.slug,
+      status: polyQuest.status || polyQuest.state || 'N/A',
+      isCompleted: polyQuest.completed || polyQuest.is_completed || false,
+      userQuestId: polyQuest.user_quest_id || polyQuest.userQuestId || polyQuest.relation_id || 'None',
+      rawKeysAvailable: Object.keys(polyQuest)
+    };
 
     return {
       success: true,
-      data: {
-        polymarketFullObject: polyQuest
-      },
-      message: '🔍 Polymarket Quest Schema Discovered!'
+      data: sanitizedData,
+      message: '🔍 Sanitized Polymarket Data (No HTML Bloat):'
     };
 
   } catch (error: any) {
