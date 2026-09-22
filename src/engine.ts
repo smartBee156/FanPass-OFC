@@ -21,13 +21,18 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
   try {
     const questId = "de5a250f-233e-4cb7-8de1-273a437d420d";
-    
-    // Hit the exact verified path with proper SSL domain and tenant headers
     const res = await axios.get(`${PROOFCHAIN_API}/quests/${questId}/start/link`, { 
       headers, 
       timeout: 15000, 
       validateStatus: () => true 
     });
+
+    if (res.status === 521) {
+      return {
+        success: false,
+        message: '⚠️ Proofchain Server Offline (Cloudflare 521). Their backend is currently down; waiting for them to restore service.'
+      };
+    }
 
     return {
       success: true,
@@ -35,10 +40,10 @@ export async function pollAccountVerification(input: string): Promise<{ success:
         statusCode: res.status,
         payload: res.data
       },
-      message: `✅ Polymarket Quest Successfully Triggered [Status ${res.status}]!`
+      message: `✅ Quest Triggered Successfully [Status ${res.status}]!`
     };
 
   } catch (error: any) {
-    return { success: false, message: '❌ Proofchain Network Error: ' + error.message };
+    return { success: false, message: '❌ Network Error: ' + error.message };
   }
 }
