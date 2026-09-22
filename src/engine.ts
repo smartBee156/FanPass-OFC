@@ -54,49 +54,64 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const userQuestId = startRes.data?.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
 
-    // Step 2: Target the endpoints that gave 405 Method Not Allowed with PUT, PATCH, and GET
+    // Step 2: Construct a comprehensive schema payload with explicit step arrays
+    const richPayloads = [
+      {
+        user_quest_id: userQuestId,
+        quest_id: questId,
+        questId: questId,
+        slug: questSlug,
+        name: questName,
+        status: 'completed',
+        steps_completed: 4,
+        total_steps: 4,
+        completion_percentage: 100,
+        steps: [
+          { step: 0, status: 'completed', completed: true },
+          { step: 1, status: 'completed', completed: true },
+          { step: 2, status: 'completed', completed: true },
+          { step: 3, status: 'completed', completed: true }
+        ]
+      },
+      {
+        id: userQuestId,
+        user_quest_id: userQuestId,
+        status: 'completed',
+        step_progress: {
+          "0": { status: "completed", completed: true, count: 1, target: 1 },
+          "1": { status: "completed", completed: true, count: 1, target: 1 },
+          "2": { status: "completed", completed: true, count: 1, target: 1 },
+          "3": { status: "completed", completed: true, count: 1, target: 1 }
+        }
+      }
+    ];
+
+    // Step 3: Target the endpoints that yielded 500 errors with our structured payload
     const targetEndpoints = [
-      `${SUBDOMAIN_API}/api/quest-progress`,
       `${SUBDOMAIN_API}/api/quests/submit`,
       `${SUBDOMAIN_API}/api/quests/complete`
     ];
-
-    const methods = ['put', 'patch', 'get', 'post'];
-    const payload = {
-      id: userQuestId,
-      user_quest_id: userQuestId,
-      questId: questId,
-      slug: questSlug,
-      name: questName,
-      status: 'completed',
-      steps_completed: 4,
-      completion_percentage: 100
-    };
 
     let completed = false;
     let winningResult = null;
 
     for (const url of targetEndpoints) {
-      for (const method of methods) {
-        const res = await axios({
-          method,
-          url,
+      for (const payload of richPayloads) {
+        const res = await axios.put(url, payload, {
           headers,
-          data: method !== 'get' ? payload : undefined,
-          params: method === 'get' ? payload : undefined,
-          timeout: 6000,
+          timeout: 8000,
           validateStatus: () => true
         });
 
         logs.push({ 
-          sweep: `${method.toUpperCase()} ${url}`, 
+          attempt: `PUT ${url}`, 
           status: res.status, 
           response: res.data 
         });
 
         if (res.status >= 200 && res.status < 300) {
           completed = true;
-          winningResult = { method: method.toUpperCase(), url, response: res.data };
+          winningResult = { url, response: res.data };
           break;
         }
       }
@@ -106,7 +121,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { userQuestId, completed, winningResult, logs },
-      message: completed ? '🚀 Polymarket Quest Force-Ticked Successfully!' : '⚡ Sweep complete. Check logs for winning combination.'
+      message: completed ? '🚀 Polymarket Quest Force-Ticked Successfully!' : '⚡ Submission dispatched. Check logs for results.'
     };
 
   } catch (error: any) {
