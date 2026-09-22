@@ -20,25 +20,59 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   }
 
   try {
-    const questId = "de5a250f-233e-4cb7-8de1-273a437d420d";
-    
-    // Hit the exact verified path with proper SSL domain and tenant headers
-    const res = await axios.get(`${PROOFCHAIN_API}/quests/${questId}/start/link`, { 
+    // Step 1: Dynamically pull the active quest list for this specific account
+    const listRes = await axios.get(`${PROOFCHAIN_API}/quests`, { 
       headers, 
       timeout: 15000, 
       validateStatus: () => true 
     });
 
+    if (listRes.status !== 200) {
+      return {
+        success: false,
+        message: `⚠️ Quest list fetch failed [Status ${listRes.status}]`
+      };
+    }
+
+    const quests = Array.isArray(listRes.data) ? listRes.data : (listRes.data.quests || listRes.data.data || []);
+
+    if (quests.length === 0) {
+      return {
+        success: true,
+        data: listRes.data,
+        message: '✅ Connected successfully! No active quests found on this account.'
+      };
+    }
+
+    // Step 2: Automatically loop through and trigger/verify every active quest found
+    const questResults = [];
+    for (const quest of quests) {
+      const questId = quest.id || quest.quest_id;
+      if (questId) {
+        const triggerRes = await axios.get(`${PROOFCHAIN_API}/quests/${questId}/start/link`, { 
+          headers, 
+          timeout: 10000, 
+          validateStatus: () => true 
+        });
+        questResults.push({
+          questId,
+          title: quest.title || quest.name || 'Quest Task',
+          status: triggerRes.status,
+          response: triggerRes.data
+        });
+      }
+    }
+
     return {
       success: true,
       data: {
-        statusCode: res.status,
-        payload: res.data
+        totalQuestsFound: quests.length,
+        results: questResults
       },
-      message: `✅ Polymarket Quest Successfully Triggered [Status ${res.status}]!`
+      message: `✅ Processed ${quests.length} active quests dynamically!`
     };
 
   } catch (error: any) {
-    return { success: false, message: '❌ Proofchain Network Error: ' + error.message };
+    return { success: false, message: '❌ Network Error: ' + error.message };
   }
 }
