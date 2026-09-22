@@ -33,43 +33,56 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const profileData = profileRes.status === 200 ? profileRes.data : null;
     const clubId = profileData ? profileData.club_id : null;
 
-    // 2. Scan exact reward, badge, and quest endpoints
-    const targetPaths = [
+    // 2. Diagnostic probe across candidate reward & quest routes
+    const candidatePaths = [
       '/users-accounts-api/v1/rewards',
       '/users-accounts-api/v1/badges',
       '/users-accounts-api/v1/quests',
+      '/users-accounts-api/v1/catalog',
       clubId ? `/users-accounts-api/v1/users/${clubId}/rewards` : '',
-      clubId ? `/users-accounts-api/v1/users/${clubId}/badges` : '',
-      '/users-accounts-api/v1/catalog'
+      clubId ? `/users-accounts-api/v1/users/${clubId}/badges` : ''
     ].filter(Boolean);
 
-    let rewardsPayload = null;
-    let successfulPath = '';
+    const diagnosticResults: Record<string, any> = {};
 
-    for (const path of targetPaths) {
+    for (const path of candidatePaths) {
       const res = await axios.get(API_BASE + path, { 
         headers, 
         timeout: 10000, 
         validateStatus: () => true 
       });
 
+      diagnosticResults[path] = {
+        status: res.status,
+        contentType: String(res.headers['content-type'] || 'unknown'),
+        sample: typeof res.data === 'string' ? res.data.slice(0, 80) : res.data
+      };
+
+      // If a path returns a successful JSON response, lock onto it immediately
       const contentType = String(res.headers['content-type'] || '');
       const bodyStr = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
 
       if (!contentType.includes('text/html') && !bodyStr.trim().startsWith('<!doctype') && res.status >= 200 && res.status < 300) {
-        rewardsPayload = res.data;
-        successfulPath = path;
-        break;
+        return {
+          success: true,
+          data: {
+            profile: profileData,
+            matchedPath: path,
+            payload: res.data
+          },
+          message: `✅ Successfully hit working endpoint: ${path}`
+        };
       }
     }
 
+    // Return full diagnostic report if no match auto-locks
     return {
       success: true,
       data: {
         profile: profileData,
-        rewardsAndBadges: rewardsPayload || 'Profile verified. Scanning badge routes.'
+        diagnosticReport: diagnosticResults
       },
-      message: `✅ Synced via profile and ${successfulPath || 'catalog routes'}!`
+      message: '✅ Profile verified. Diagnostic status codes returned above.'
     };
 
   } catch (error: any) {
