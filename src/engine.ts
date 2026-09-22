@@ -9,8 +9,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     'Accept': 'application/json, text/plain, */*',
     'Origin': 'https://fanpass.onefootball.com',
     'Referer': 'https://fanpass.onefootball.com/',
-    'X-Tenant-ID': 'tenant_1g6k1cew859ls7408',
-    'Content-Type': 'application/json'
+    'X-Tenant-ID': 'tenant_1g6k1cew859ls7408'
   };
 
   if (token.startsWith('eyJ')) {
@@ -19,49 +18,45 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     headers['Cookie'] = token;
   }
 
-  const polymarketQuestId = '81ff3b8a-03bf-488c-828c-f60923e96149';
-  const polymarketSlug = 'kick-off-with-polymarket-us';
-  const polymarketName = 'Market Debut';
+  try {
+    // Fetch the live list of quests to inspect the full object schema for Polymarket
+    const res = await axios.get(`${SUBDOMAIN_API}/api/quests`, { 
+      headers, 
+      timeout: 15000, 
+      validateStatus: () => true 
+    });
 
-  // Include the required 'name' field demanded by the backend schema validator
-  const payloadsToTest = [
-    { id: polymarketQuestId, name: polymarketName, slug: polymarketSlug },
-    { questId: polymarketQuestId, name: polymarketName },
-    { name: polymarketName, id: polymarketQuestId },
-    { name: polymarketName, slug: polymarketSlug }
-  ];
-
-  const results = [];
-
-  for (const payload of payloadsToTest) {
-    try {
-      const res = await axios.put(`${SUBDOMAIN_API}/api/quests/verify`, payload, {
-        headers,
-        timeout: 10000,
-        validateStatus: () => true
-      });
-
-      results.push({
-        payload,
-        status: res.status,
-        response: res.data
-      });
-
-      if (res.status >= 200 && res.status < 300) {
-        return {
-          success: true,
-          data: { winningPayload: payload, response: res.data },
-          message: `🚀 Polymarket Quest Successfully Force-Ticked!`
-        };
-      }
-    } catch (err: any) {
-      results.push({ payload, error: err.message });
+    if (res.status !== 200 || !Array.isArray(res.data)) {
+      return {
+        success: false,
+        message: `⚠️ Failed to fetch quest list [Status ${res.status}]`
+      };
     }
-  }
 
-  return {
-    success: true,
-    data: { results },
-    message: '⚡ Schema Payload Audit Complete. Check response snippet.'
-  };
+    // Find the Polymarket quest specifically
+    const polyQuest = res.data.find((q: any) => 
+      q.id === '81ff3b8a-03bf-488c-828c-f60923e96149' || 
+      (q.slug && q.slug.includes('polymarket')) ||
+      (q.name && q.name.toLowerCase().includes('market debut'))
+    );
+
+    if (!polyQuest) {
+      return {
+        success: true,
+        data: { allQuestsCount: res.data.length },
+        message: '⚠️ Polymarket quest not found in active list. Check raw payload.'
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        polymarketFullObject: polyQuest
+      },
+      message: '🔍 Polymarket Quest Schema Discovered!'
+    };
+
+  } catch (error: any) {
+    return { success: false, message: '❌ Error: ' + error.message };
+  }
 }
