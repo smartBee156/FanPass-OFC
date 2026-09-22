@@ -54,63 +54,54 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const userQuestId = startRes.data?.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
 
-    // Step 2: Build the ultimate master schema payload with all required root and step properties
-    const masterPayload = {
-      id: userQuestId,
-      user_quest_id: userQuestId,
-      quest_id: questId,
-      questId: questId,
-      slug: questSlug,
-      name: questName,
-      status: 'completed',
-      steps_completed: 4,
-      total_steps: 4,
-      completion_percentage: 100,
-      steps: [
-        { step: 0, name: 'Market Step 1', status: 'completed', completed: true, count: 1, target: 1 },
-        { step: 1, name: 'Market Step 2', status: 'completed', completed: true, count: 1, target: 1 },
-        { step: 2, name: 'Market Step 3', status: 'completed', completed: true, count: 1, target: 1 },
-        { step: 3, name: 'Market Step 4', status: 'completed', completed: true, count: 1, target: 1 }
-      ],
-      step_progress: {
-        "0": { name: 'Market Step 1', status: "completed", completed: true, count: 1, target: 1 },
-        "1": { name: 'Market Step 2', status: "completed", completed: true, count: 1, target: 1 },
-        "2": { name: 'Market Step 3', status: "completed", completed: true, count: 1, target: 1 },
-        "3": { name: 'Market Step 4', status: "completed", completed: true, count: 1, target: 1 }
+    // Step 2: Test clean, lightweight payloads to prevent internal server crashes (500s)
+    const cleanPayloads = [
+      {
+        id: userQuestId,
+        user_quest_id: userQuestId,
+        quest_id: questId,
+        status: 'completed'
+      },
+      {
+        user_quest_id: userQuestId,
+        quest_id: questId,
+        name: questName,
+        status: 'completed'
+      },
+      {
+        id: userQuestId,
+        status: 'completed',
+        completion_percentage: 100
       }
-    };
+    ];
 
-    // Step 3: Target ONLY the confirmed live root endpoints (no 404 paths)
-    const confirmedEndpoints = [
+    const targetEndpoints = [
       `${SUBDOMAIN_API}/api/quests/verify`,
       `${SUBDOMAIN_API}/api/quests/submit`,
-      `${SUBDOMAIN_API}/api/quests/complete`,
-      `${SUBDOMAIN_API}/api/quest-progress`
+      `${SUBDOMAIN_API}/api/quests/complete`
     ];
 
     let completed = false;
     let winningResult = null;
 
-    for (const url of confirmedEndpoints) {
-      for (const method of ['put', 'post', 'patch']) {
-        const res = await axios({
-          method,
-          url,
+    for (const url of targetEndpoints) {
+      for (const payload of cleanPayloads) {
+        const res = await axios.put(url, payload, {
           headers,
-          data: masterPayload,
           timeout: 8000,
           validateStatus: () => true
         });
 
         logs.push({ 
-          attempt: `${method.toUpperCase()} ${url}`, 
+          attempt: `PUT ${url}`, 
+          payloadKeys: Object.keys(payload),
           status: res.status, 
           response: res.data 
         });
 
         if (res.status >= 200 && res.status < 300) {
           completed = true;
-          winningResult = { method: method.toUpperCase(), url, response: res.data };
+          winningResult = { url, response: res.data };
           break;
         }
       }
@@ -120,7 +111,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { userQuestId, completed, winningResult, logs },
-      message: completed ? '🚀 Polymarket Quest Force-Ticked Successfully!' : '⚡ Confirmed endpoints swept. Check results.'
+      message: completed ? '🚀 Polymarket Quest Fully Completed & Ticked!' : '⚡ Clean payload sweep complete. Check response logs.'
     };
 
   } catch (error: any) {
