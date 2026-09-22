@@ -21,14 +21,14 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
   const polymarketQuestId = '81ff3b8a-03bf-488c-828c-f60923e96149';
   const polymarketSlug = 'kick-off-with-polymarket-us';
+  const polymarketName = 'Market Debut';
 
-  // Test different schema key formats to find what the 422 validator expects
+  // Include the required 'name' field demanded by the backend schema validator
   const payloadsToTest = [
-    { questId: polymarketQuestId },
-    { id: polymarketQuestId },
-    { slug: polymarketSlug },
-    { quest_id: polymarketQuestId },
-    { questId: polymarketQuestId, slug: polymarketSlug }
+    { id: polymarketQuestId, name: polymarketName, slug: polymarketSlug },
+    { questId: polymarketQuestId, name: polymarketName },
+    { name: polymarketName, id: polymarketQuestId },
+    { name: polymarketName, slug: polymarketSlug }
   ];
 
   const results = [];
@@ -51,7 +51,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
         return {
           success: true,
           data: { winningPayload: payload, response: res.data },
-          message: `🚀 Polymarket Quest Force-Ticked Successfully via PUT!`
+          message: `🚀 Polymarket Quest Successfully Force-Ticked!`
         };
       }
     } catch (err: any) {
@@ -62,6 +62,6 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   return {
     success: true,
     data: { results },
-    message: '⚡ Schema Resolution Audit Complete. Check response snippet.'
+    message: '⚡ Schema Payload Audit Complete. Check response snippet.'
   };
 }
