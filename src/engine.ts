@@ -1,23 +1,6 @@
 import axios from 'axios';
-import https from 'https';
 
-// Intercept DNS lookup for passchain while preserving the hostname for SSL/SNI
-const passchainAgent = new https.Agent({
-  lookup: (hostname, options, callback) => {
-    const cb = typeof options === 'function' ? options : callback;
-    if (hostname === 'api.passchain.co.za') {
-      return cb(null, '104.26.3.64', 4);
-    }
-    return cb(new Error('Unknown hostname'), '', 4);
-  }
-});
-
-const passchainClient = axios.create({
-  baseURL: 'https://api.passchain.co.za',
-  httpsAgent: passchainAgent,
-  validateStatus: () => true,
-  timeout: 15000
-});
+const PROOFCHAIN_API = 'https://api.proofchain.co.za';
 
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   const token = input.trim();
@@ -36,7 +19,13 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
   try {
     const questId = "de5a250f-233e-4cb7-8de1-273a437d420d";
-    const res = await passchainClient.get(`/quests/${questId}/start/link`, { headers });
+    
+    // Test the quest start/verify route on the correct proofchain domain
+    const res = await axios.get(`${PROOFCHAIN_API}/quests/${questId}/start/link`, { 
+      headers, 
+      timeout: 15000, 
+      validateStatus: () => true 
+    });
 
     return {
       success: true,
@@ -44,10 +33,10 @@ export async function pollAccountVerification(input: string): Promise<{ success:
         statusCode: res.status,
         payload: res.data
       },
-      message: `✅ Passchain Backend Triggered [Status ${res.status}]!`
+      message: `✅ Proofchain API Connected [Status ${res.status}]!`
     };
 
   } catch (error: any) {
-    return { success: false, message: '❌ Network Error: ' + error.message };
+    return { success: false, message: '❌ Proofchain Network Error: ' + error.message };
   }
 }
