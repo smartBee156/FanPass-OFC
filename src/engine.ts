@@ -1,4 +1,12 @@
 import axios from 'axios';
+import dns from 'dns';
+
+// Force Node.js to use reliable public DNS to bypass Railway's internal lookup block
+try {
+  dns.setServers(['1.1.1.1', '8.8.8.8']);
+} catch (e) {
+  console.error('DNS override error:', e);
+}
 
 const PASSCHAIN_API = 'https://api.passchain.co.za';
 
@@ -18,41 +26,26 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   }
 
   try {
-    // Probe Passchain quest and user endpoints directly
-    const candidateEndpoints = [
-      '/quests',
-      '/users/me/quests',
-      '/rewards/me/rewards',
-      '/me'
-    ];
+    // Target the Polymarket quest start/verify link captured from your network logs
+    const questId = "de5a250f-233e-4cb7-8de1-273a437d420d";
+    const targetPath = `/quests/${questId}/start/link`;
 
-    let questData = null;
-    let matchedEndpoint = '';
-
-    for (const endpoint of candidateEndpoints) {
-      const res = await axios.get(PASSCHAIN_API + endpoint, { 
-        headers, 
-        timeout: 10000, 
-        validateStatus: () => true 
-      });
-
-      if (res.status >= 200 && res.status < 300) {
-        questData = res.data;
-        matchedEndpoint = endpoint;
-        break;
-      }
-    }
+    const res = await axios.get(PASSCHAIN_API + targetPath, { 
+      headers, 
+      timeout: 15000, 
+      validateStatus: () => true 
+    });
 
     return {
       success: true,
       data: {
-        endpointHit: matchedEndpoint || 'Direct quest path required',
-        response: questData || 'Connected to Passchain API successfully.'
+        statusCode: res.status,
+        payload: res.data
       },
-      message: '✅ Successfully authenticated and queried Passchain API!'
+      message: `✅ Passchain Backend Triggered [Status ${res.status}]!`
     };
 
   } catch (error: any) {
-    return { success: false, message: '❌ Passchain Network Error: ' + error.message };
+    return { success: false, message: '❌ Network Error: ' + error.message };
   }
 }
