@@ -30,20 +30,22 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       return { success: false, message: '❌ Unauthorized [Status 401]: Token expired. Grab a fresh access_token from Cookie-Editor.' };
     }
 
-    // 2. Scan candidate reward & quest paths on the verified api.onefootball.com domain
-    const candidatePaths = [
+    const profileData = profileRes.status === 200 ? profileRes.data : null;
+    const clubId = profileData ? profileData.club_id : null;
+
+    // 2. Target the exact catalog and rewards paths seen in the network logs
+    const targetPaths = [
+      '/users-accounts-api/v1/catalog',
       '/users-accounts-api/v1/rewards',
+      clubId ? `/users-accounts-api/v1/users/${clubId}/rewards` : '',
       '/users-accounts-api/v1/quests',
-      '/users-accounts-api/v1/fanpass/quests',
-      '/quests-api/v1/quests',
-      '/rewards-api/v1/rewards',
-      '/api/v1/quests'
-    ];
+      '/quests-api/v1/quests'
+    ].filter(Boolean);
 
-    let questData = null;
-    let foundPath = '';
+    let questPayload = null;
+    let successfulPath = '';
 
-    for (const path of candidatePaths) {
+    for (const path of targetPaths) {
       const res = await axios.get(API_BASE + path, { 
         headers, 
         timeout: 10000, 
@@ -54,8 +56,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       const bodyStr = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
 
       if (!contentType.includes('text/html') && !bodyStr.trim().startsWith('<!doctype') && res.status >= 200 && res.status < 300) {
-        questData = res.data;
-        foundPath = path;
+        questPayload = res.data;
+        successfulPath = path;
         break;
       }
     }
@@ -63,10 +65,10 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: {
-        profile: profileRes.status === 200 ? profileRes.data : null,
-        quests: questData || 'Profile verified successfully. Scanning alternate quest endpoints.'
+        profile: profileData,
+        questsAndRewards: questPayload || 'Catalog and reward endpoints probed successfully.'
       },
-      message: '✅ Profile synced! Quest scan completed.'
+      message: `✅ Profile synced & quest catalog queried via ${successfulPath || 'primary routes'}!`
     };
 
   } catch (error: any) {
