@@ -24,13 +24,20 @@ function saveAccounts(accounts: Account[]) {
   fs.writeFileSync(filePath, JSON.stringify(accounts, null, 2));
 }
 
-// Bulletproof reply helper that prevents Telegram "message is too long" crashes
+// Bulletproof multi-chunk reply helper that handles Telegram's 4096 character limit gracefully
 async function safeReply(ctx: any, text: string) {
   try {
-    if (text.length > 1500) {
-      text = text.substring(0, 1500) + '\n... [Output truncated to prevent Telegram size limit error]';
+    const MAX_LENGTH = 4000;
+    if (text.length <= MAX_LENGTH) {
+      await ctx.reply(text);
+      return;
     }
-    await ctx.reply(text);
+
+    // Automatically split long outputs into sequential chunks without truncation
+    for (let i = 0; i < text.length; i += MAX_LENGTH) {
+      const chunk = text.substring(i, i + MAX_LENGTH);
+      await ctx.reply(chunk);
+    }
   } catch (err: any) {
     console.error('Telegram reply error:', err.message);
   }
@@ -56,8 +63,7 @@ bot.command('run', async (ctx) => {
       
       if (result.success) {
         const jsonString = JSON.stringify(result.data, null, 2);
-        const snippet = jsonString.length > 800 ? jsonString.substring(0, 800) + '\n...' : jsonString;
-        const msg = '✅ ' + acc.name + ' Success!\n\nAPI Response Snippet:\n' + snippet;
+        const msg = '✅ ' + acc.name + ' Success!\n\nAPI Response Snippet:\n' + jsonString;
         await safeReply(ctx, msg);
       } else {
         await safeReply(ctx, '❌ ' + acc.name + ' Failed: ' + result.message);
