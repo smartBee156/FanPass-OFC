@@ -9,7 +9,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     'Accept': 'application/json, text/plain, */*',
     'Origin': 'https://fanpass.onefootball.com',
     'Referer': 'https://fanpass.onefootball.com/',
-    'X-Tenant-ID': 'tenant_1g6k1cew859ls7408'
+    'X-Tenant-ID': 'tenant_1g6k1cew859ls7408',
+    'Content-Type': 'application/json'
   };
 
   if (token.startsWith('eyJ')) {
@@ -18,41 +19,65 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     headers['Cookie'] = token;
   }
 
+  const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
+  const questName = 'Market Debut';
+  const questSlug = 'kick-off-with-polymarket-us';
+
   try {
-    const res = await axios.get(`${SUBDOMAIN_API}/api/quests`, { 
-      headers, 
-      timeout: 15000, 
-      validateStatus: () => true 
-    });
+    const executionLogs = [];
 
-    if (res.status !== 200 || !Array.isArray(res.data)) {
-      return { success: false, message: `⚠️ Failed [Status ${res.status}]` };
+    // Step 1: Initialize / Start the quest to generate your user-quest instance
+    const startEndpoints = [
+      { method: 'get', url: `${SUBDOMAIN_API}/api/quests/${questId}/start` },
+      { method: 'post', url: `${SUBDOMAIN_API}/api/quests/${questId}/start`, data: { questId } },
+      { method: 'get', url: `${SUBDOMAIN_API}/api/quests/${questId}/start/link` }
+    ];
+
+    let initialized = false;
+    for (const startOp of startEndpoints) {
+      const res = await axios({
+        method: startOp.method,
+        url: startOp.url,
+        headers,
+        data: (startOp as any).data,
+        timeout: 8000,
+        validateStatus: () => true
+      });
+
+      executionLogs.push({ step: 'START', action: `${startOp.method.toUpperCase()} ${startOp.url}`, status: res.status, response: res.data });
+
+      if (res.status >= 200 && res.status < 300) {
+        initialized = true;
+        break;
+      }
     }
 
-    const polyQuest = res.data.find((q: any) => 
-      q.id === '81ff3b8a-03bf-488c-828c-f60923e96149' || 
-      (q.slug && q.slug.includes('polymarket'))
-    );
+    // Step 2: Fire the verification / completion force-tick payload
+    const verifyPayloads = [
+      { id: questId, name: questName, slug: questSlug },
+      { questId, name: questName }
+    ];
 
-    if (!polyQuest) {
-      return { success: true, message: '⚠️ Polymarket quest not found in active list.' };
+    let completed = false;
+    for (const payload of verifyPayloads) {
+      const res = await axios.put(`${SUBDOMAIN_API}/api/quests/verify`, payload, {
+        headers,
+        timeout: 8000,
+        validateStatus: () => true
+      });
+
+      executionLogs.push({ step: 'VERIFY', payload, status: res.status, response: res.data });
+
+      if (res.status >= 200 && res.status < 300) {
+        completed = true;
+        break;
+      }
     }
-
-    // Strip out heavy HTML fields and isolate the keys that matter for progression
-    const sanitizedData = {
-      id: polyQuest.id,
-      name: polyQuest.name,
-      slug: polyQuest.slug,
-      status: polyQuest.status || polyQuest.state || 'N/A',
-      isCompleted: polyQuest.completed || polyQuest.is_completed || false,
-      userQuestId: polyQuest.user_quest_id || polyQuest.userQuestId || polyQuest.relation_id || 'None',
-      rawKeysAvailable: Object.keys(polyQuest)
-    };
 
     return {
       success: true,
-      data: sanitizedData,
-      message: '🔍 Sanitized Polymarket Data (No HTML Bloat):'
+      data: { initialized, completed, executionLogs },
+      message: completed ? '🚀 Polymarket Quest Successfully Initialized and Force-Ticked!' : '⚡ Execution completed. Check logs for details.'
     };
 
   } catch (error: any) {
