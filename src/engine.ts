@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const SUBDOMAIN_API = 'https://fanpass.proofchain.co.za';
+const BASE_API = 'https://api.onefootball.com/fanpass-metagame-backend';
+const TENANT_ID = 'tenant_1g6k1cew859ls7408';
 
 function extractUserId(token: string): string | null {
   try {
@@ -22,7 +23,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       'Accept': 'application/json, text/plain, */*',
       'Origin': 'https://fanpass.onefootball.com',
       'Referer': 'https://fanpass.onefootball.com/',
-      'X-Tenant-ID': 'tenant_1g6k1cew859ls7408',
+      'X-Tenant-ID': TENANT_ID,
       'Content-Type': 'application/json'
     };
 
@@ -33,98 +34,46 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     }
 
     const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
-    const questName = 'Market Debut';
-    const questSlug = 'kick-off-with-polymarket-us';
-    const userId = extractUserId(token);
+    const userId = extractUserId(token) || 'fe6a740a-4c0a-490f-8bf2-d9189a2b1ef8';
+    const encodedUser = encodeURIComponent(userId);
 
     const logs = [];
 
-    // Step 1: Initialize user quest instance
-    const startUrl = userId 
-      ? `${SUBDOMAIN_API}/api/quests/${questId}/start?user_id=${userId}`
-      : `${SUBDOMAIN_API}/api/quests/${questId}/start`;
+    // 1. Initialize / Start the quest
+    const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
+    const startRes = await axios.post(startUrl, {}, { headers, validateStatus: () => true });
+    logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    const startRes = await axios.post(startUrl, { questId }, {
-      headers,
-      timeout: 8000,
-      validateStatus: () => true
-    });
+    // 2. Loop through all 4 steps (0, 1, 2, 3) using the exact frontend route patterns
+    const stepResults = [];
+    for (let stepIndex = 0; stepIndex < 4; stepIndex++) {
+      const stepStartUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/step/${stepIndex}/start`;
+      const stepCompleteUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/step/${stepIndex}/complete`;
 
-    logs.push({ step: 'START', status: startRes.status, response: startRes.data });
+      const sStart = await axios.post(stepStartUrl, {}, { headers, validateStatus: () => true });
+      const sComplete = await axios.post(stepCompleteUrl, {}, { headers, validateStatus: () => true });
 
-    const serverInstance = startRes.data || {};
-    const userQuestId = serverInstance.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
-
-    // Step 2: Force all step_progress keys (0, 1, 2, 3) to fully completed state
-    const currentProgress = serverInstance.step_progress || {};
-    const forcedStepProgress: Record<string, any> = {};
-    
-    const stepKeys = Object.keys(currentProgress).length > 0 ? Object.keys(currentProgress) : ["0", "1", "2", "3"];
-    
-    for (const key of stepKeys) {
-      const targetVal = currentProgress[key]?.target || 1;
-      forcedStepProgress[key] = {
-        ...(currentProgress[key] || {}),
-        count: targetVal,
-        cumulative_value: targetVal,
-        target: targetVal,
-        completed: true,
-        status: 'completed',
-        completed_at: new Date().toISOString()
-      };
+      stepResults.push({
+        step: stepIndex,
+        startStatus: sStart.status,
+        completeStatus: sComplete.status,
+        completeResponse: sComplete.data
+      });
     }
 
-    const payload = {
-      ...serverInstance,
-      id: userQuestId,
-      user_quest_id: userQuestId,
-      quest_id: questId,
-      questId: questId,
-      slug: questSlug,
-      name: questName,
-      status: 'completed',
-      current_step: stepKeys.length,
-      steps_completed: stepKeys.length,
-      total_steps: stepKeys.length,
-      completion_percentage: 100,
-      step_progress: forcedStepProgress,
-      completed_at: new Date().toISOString()
-    };
+    logs.push({ step: 'STEPS_EXECUTION', results: stepResults });
 
-    // Step 3: Fire against primary completion endpoints with the fully poisoned state
-    const endpoints = [
-      `${SUBDOMAIN_API}/api/quests/verify`,
-      `${SUBDOMAIN_API}/api/quests/submit`,
-      `${SUBDOMAIN_API}/api/quests/complete`
-    ];
+    // 3. Claim final reward
+    const claimUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`;
+    const claimRes = await axios.post(claimUrl, {}, { headers, validateStatus: () => true });
+    logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
 
-    let completed = false;
-    let winningResult = null;
-
-    for (const url of endpoints) {
-      const res = await axios.put(url, payload, {
-        headers,
-        timeout: 8000,
-        validateStatus: () => true
-      });
-
-      logs.push({ 
-        attempt: `PUT ${url}`, 
-        status: res.status, 
-        response: res.data 
-      });
-
-      if (res.status >= 200 && res.status < 300) {
-        completed = true;
-        winningResult = { url, response: res.data };
-        break;
-      }
-    }
+    const success = claimRes.status >= 200 && claimRes.status < 300;
 
     return {
       success: true,
-      data: { userQuestId, completed, winningResult, logs },
-      message: completed ? '🚀 Polymarket Quest Fully Completed & Ticked!' : '⚡ Sequence dispatched. Check response logs.'
+      data: { userId, questId, logs },
+      message: success ? '🚀 Polymarket Quest Fully Completed & Claimed!' : '⚡ Steps executed. Check response logs for details.'
     };
 
   } catch (error: any) {
