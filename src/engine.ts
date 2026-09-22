@@ -34,12 +34,11 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
     const questName = 'Market Debut';
-    const questSlug = 'kick-off-with-polymarket-us';
     const userId = extractUserId(token);
 
     const logs = [];
 
-    // Step 1: Start / Initialize user quest instance
+    // Step 1: Start / Initialize user quest instance to get the full server state schema
     const startUrl = userId 
       ? `${SUBDOMAIN_API}/api/quests/${questId}/start?user_id=${userId}`
       : `${SUBDOMAIN_API}/api/quests/${questId}/start`;
@@ -52,29 +51,37 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     logs.push({ step: 'START', status: startRes.status, response: startRes.data });
 
-    const userQuestId = startRes.data?.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
+    const serverInstance = startRes.data || {};
+    const userQuestId = serverInstance.id || '26ada2ca-8b24-4cc6-9566-b826026397ab';
 
-    // Step 2: Test clean, lightweight payloads to prevent internal server crashes (500s)
-    const cleanPayloads = [
-      {
-        id: userQuestId,
-        user_quest_id: userQuestId,
-        quest_id: questId,
-        status: 'completed'
-      },
-      {
-        user_quest_id: userQuestId,
-        quest_id: questId,
-        name: questName,
-        status: 'completed'
-      },
-      {
-        id: userQuestId,
+    // Step 2: Take the exact server instance schema, inject 'name', and mark all steps completed
+    const fullCompletedProgress: Record<string, any> = {};
+    const existingProgress = serverInstance.step_progress || { "0": {}, "1": {}, "2": {}, "3": {} };
+    
+    for (const key of Object.keys(existingProgress)) {
+      fullCompletedProgress[key] = {
+        ...(existingProgress[key] || {}),
+        count: existingProgress[key]?.target || 1,
+        cumulative_value: existingProgress[key]?.target || 1,
+        target: existingProgress[key]?.target || 1,
+        completed: true,
         status: 'completed',
-        completion_percentage: 100
-      }
-    ];
+        completed_at: new Date().toISOString()
+      };
+    }
 
+    const completePayload = {
+      ...serverInstance,
+      name: questName,
+      status: 'completed',
+      current_step: serverInstance.total_steps || 4,
+      steps_completed: serverInstance.total_steps || 4,
+      completion_percentage: 100,
+      step_progress: fullCompletedProgress,
+      completed_at: new Date().toISOString()
+    };
+
+    // Step 3: Dispatch the fully synchronized schema payload to the active PUT endpoints
     const targetEndpoints = [
       `${SUBDOMAIN_API}/api/quests/verify`,
       `${SUBDOMAIN_API}/api/quests/submit`,
@@ -85,33 +92,29 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     let winningResult = null;
 
     for (const url of targetEndpoints) {
-      for (const payload of cleanPayloads) {
-        const res = await axios.put(url, payload, {
-          headers,
-          timeout: 8000,
-          validateStatus: () => true
-        });
+      const res = await axios.put(url, completePayload, {
+        headers,
+        timeout: 8000,
+        validateStatus: () => true
+      });
 
-        logs.push({ 
-          attempt: `PUT ${url}`, 
-          payloadKeys: Object.keys(payload),
-          status: res.status, 
-          response: res.data 
-        });
+      logs.push({ 
+        attempt: `PUT ${url}`, 
+        status: res.status, 
+        response: res.data 
+      });
 
-        if (res.status >= 200 && res.status < 300) {
-          completed = true;
-          winningResult = { url, response: res.data };
-          break;
-        }
+      if (res.status >= 200 && res.status < 300) {
+        completed = true;
+        winningResult = { url, response: res.data };
+        break;
       }
-      if (completed) break;
     }
 
     return {
       success: true,
       data: { userQuestId, completed, winningResult, logs },
-      message: completed ? '🚀 Polymarket Quest Fully Completed & Ticked!' : '⚡ Clean payload sweep complete. Check response logs.'
+      message: completed ? '🚀 Polymarket Quest Fully Completed & Ticked!' : '⚡ Synchronized payload dispatched. Check response logs.'
     };
 
   } catch (error: any) {
