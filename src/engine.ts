@@ -44,55 +44,26 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const startRes = await axios.post(startUrl, {}, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    const serverInstance = startRes.data || {};
-
-    // 2. Build fully forced completion progress state for all steps (0 to 3)
-    const forcedProgress: Record<string, any> = {};
-    for (let i = 0; i < 4; i++) {
-      forcedProgress[i.toString()] = {
-        count: 1,
-        cumulative_value: 1,
-        target: 1,
-        completed: true,
-        status: 'completed',
-        completed_at: new Date().toISOString()
-      };
-    }
-
-    const mutationPayload = {
-      ...serverInstance,
-      status: 'completed',
-      current_step: 4,
-      steps_completed: 4,
-      completion_percentage: 100,
-      step_progress: forcedProgress,
-      completed_at: new Date().toISOString()
-    };
-
-    // 3. Mutate the progress document directly via PUT and PATCH
+    // 2. Fetch live user progress using the correct GET method identified in the frontend bundles
     const progressUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}`;
-    let progressUpdated = false;
+    const progressRes = await axios.get(progressUrl, { headers, validateStatus: () => true });
+    logs.push({ step: 'GET_PROGRESS', status: progressRes.status, response: progressRes.data });
 
-    for (const method of ['put', 'patch', 'post']) {
-      const pRes = await axios({
-        method,
-        url: progressUrl,
-        headers,
-        data: mutationPayload,
-        validateStatus: () => true
-      });
+    // 3. Trigger potential sync, refresh, or check endpoints to force event ingestion
+    const syncEndpoints = [
+      `${BASE_API}/quests/${questId}/progress/${encodedUser}/sync`,
+      `${BASE_API}/quests/${questId}/progress/${encodedUser}/refresh`,
+      `${BASE_API}/quests/${questId}/sync`,
+      `${BASE_API}/users/me/sync`
+    ];
 
-      logs.push({ 
-        attempt: `${method.toUpperCase()} ${progressUrl}`, 
-        status: pRes.status, 
-        response: pRes.data 
-      });
-
-      if (pRes.status >= 200 && pRes.status < 300) {
-        progressUpdated = true;
-        break;
-      }
+    const syncResults = [];
+    for (const sUrl of syncEndpoints) {
+      const sRes = await axios.post(sUrl, {}, { headers, validateStatus: () => true });
+      syncResults.push({ url: sUrl, status: sRes.status, response: sRes.data });
+      if (sRes.status >= 200 && sRes.status < 300) break;
     }
+    logs.push({ step: 'SYNC_TRIGGER', results: syncResults });
 
     // 4. Attempt to claim reward
     const claimUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`;
@@ -103,8 +74,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     return {
       success: true,
-      data: { userId, questId, progressUpdated, logs },
-      message: success ? '🚀 Polymarket Quest Force-Completed & Claimed Successfully!' : '⚡ Progress synchronization complete. Check execution logs.'
+      data: { userId, questId, logs },
+      message: success ? '🚀 Polymarket Quest Synced & Claimed Successfully!' : '⚡ Progress fetched and sync probes dispatched. Check logs.'
     };
 
   } catch (error: any) {
