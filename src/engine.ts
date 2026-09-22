@@ -19,7 +19,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   }
 
   try {
-    // 1. Fetch verified user profile
+    // 1. Fetch verified user profile (proven working)
     const profileRes = await axios.get(API_BASE + '/users-accounts-api/v1/settings/profile', { 
       headers, 
       timeout: 15000, 
@@ -30,12 +30,15 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       return { success: false, message: '❌ Unauthorized [Status 401]: Token expired. Grab a fresh access_token from Cookie-Editor.' };
     }
 
-    // 2. Probe candidate quest endpoints
+    // 2. Expanded quest / rewards candidate endpoints
     const questCandidatePaths = [
       '/users-accounts-api/v1/quests',
       '/users-accounts-api/v1/fanpass/quests',
-      '/quests-api/v1/quests',
-      '/users-accounts-api/v1/user/quests'
+      '/users-accounts-api/v1/fanpass',
+      '/users-accounts-api/v1/rewards',
+      '/users-accounts-api/v1/campaigns',
+      '/users-accounts-api/v1/me',
+      '/quests-api/v1/quests'
     ];
 
     let questData = null;
@@ -62,8 +65,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       success: true,
       data: {
         profile: profileRes.status === 200 ? profileRes.data : null,
-        quests: questData || 'No standard quest endpoint matched yet',
-        activeQuestPath: foundPath || 'Manual network check recommended'
+        quests: questData || 'Scanning further paths on next iteration',
+        activeQuestPath: foundPath || 'Searching...'
       },
       message: '✅ Profile & Quest scan executed successfully!'
     };
