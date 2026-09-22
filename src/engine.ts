@@ -3,18 +3,6 @@ import axios from 'axios';
 const BASE_API = 'https://fanpass.proofchain.co.za/api';
 const TENANT_ID = 'tenant_1g6k1cew859ls7408';
 
-function extractUserId(token: string): string | null {
-  try {
-    if (!token.startsWith('eyJ')) return null;
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-    return payload.sub || payload.user_id || payload.id || payload.uid || null;
-  } catch (e) {
-    return null;
-  }
-}
-
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   try {
     const token = input.trim();
@@ -34,48 +22,48 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     }
 
     const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
-    const userId = extractUserId(token) || 'afe546fe-0aa9-4a4b-9ff4-81db76b76cdf';
-    const encodedUser = encodeURIComponent(userId);
-
     const logs = [];
 
-    // 1. Initialize / Start the quest
-    const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
-    const startRes = await axios.post(startUrl, {}, { headers, validateStatus: () => true });
+    // 1. Initialize / Start the quest (without pre-filtering user_id in URL if not required)
+    const startUrl = `${BASE_API}/quests/${questId}/start`;
+    const startRes = await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 2. Fetch live user progress using the correct GET method identified in the frontend bundles
+    const serverInstance = startRes.data || {};
+    const actualUserId = serverInstance.user_id;
+    const userQuestId = serverInstance.id;
+
+    if (!actualUserId) {
+      return { success: false, data: { logs }, message: '❌ Failed to extract server-bound user_id from START response.' };
+    }
+
+    const encodedUser = encodeURIComponent(actualUserId);
+
+    // 2. Fetch live progress using the correct server-bound user ID
     const progressUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}`;
     const progressRes = await axios.get(progressUrl, { headers, validateStatus: () => true });
     logs.push({ step: 'GET_PROGRESS', status: progressRes.status, response: progressRes.data });
 
-    // 3. Trigger potential sync, refresh, or check endpoints to force event ingestion
-    const syncEndpoints = [
-      `${BASE_API}/quests/${questId}/progress/${encodedUser}/sync`,
-      `${BASE_API}/quests/${questId}/progress/${encodedUser}/refresh`,
-      `${BASE_API}/quests/${questId}/sync`,
-      `${BASE_API}/users/me/sync`
-    ];
-
-    const syncResults = [];
-    for (const sUrl of syncEndpoints) {
-      const sRes = await axios.post(sUrl, {}, { headers, validateStatus: () => true });
-      syncResults.push({ url: sUrl, status: sRes.status, response: sRes.data });
-      if (sRes.status >= 200 && sRes.status < 300) break;
+    // 3. Attempt step verification/completion using the correct instance context
+    const stepResults = [];
+    for (let stepIndex = 0; stepIndex < 4; stepIndex++) {
+      const stepCompleteUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/step/${stepIndex}/complete`;
+      const sComplete = await axios.post(stepCompleteUrl, { user_quest_id: userQuestId }, { headers, validateStatus: () => true });
+      stepResults.push({ step: stepIndex, status: sComplete.status, response: sComplete.data });
     }
-    logs.push({ step: 'SYNC_TRIGGER', results: syncResults });
+    logs.push({ step: 'STEPS_EXECUTION', results: stepResults });
 
-    // 4. Attempt to claim reward
+    // 4. Claim final reward
     const claimUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`;
-    const claimRes = await axios.post(claimUrl, {}, { headers, validateStatus: () => true });
+    const claimRes = await axios.post(claimUrl, { user_quest_id: userQuestId }, { headers, validateStatus: () => true });
     logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
 
     const success = claimRes.status >= 200 && claimRes.status < 300;
 
     return {
       success: true,
-      data: { userId, questId, logs },
-      message: success ? '🚀 Polymarket Quest Synced & Claimed Successfully!' : '⚡ Progress fetched and sync probes dispatched. Check logs.'
+      data: { actualUserId, userQuestId, logs },
+      message: success ? '🚀 Polymarket Quest Successfully Completed & Claimed!' : '⚡ Executed with bound server ID. Check execution logs.'
     };
 
   } catch (error: any) {
