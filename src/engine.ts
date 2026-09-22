@@ -1,23 +1,14 @@
 import axios from 'axios';
 
-const BASE_URL = 'https://fanpass.onefootball.com';
-
-const CANDIDATE_PATHS = [
-  '/api/quests',
-  '/api/user',
-  '/api/profile',
-  '/api/me',
-  '/api/status',
-  '/api/v1/quests',
-  '/api/v1/user',
-  '/api/auth/me'
-];
+const API_URL = 'https://api.onefootball.com/users-accounts-api/v1/settings/profile';
 
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   const token = input.trim();
   const headers: Record<string, string> = {
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile)',
-    'Accept': 'application/json, text/plain, */*'
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Origin': 'https://fanpass.onefootball.com',
+    'Referer': 'https://fanpass.onefootball.com/'
   };
 
   if (token.startsWith('eyJ')) {
@@ -27,34 +18,21 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     headers['Cookie'] = token;
   }
 
-  for (const path of CANDIDATE_PATHS) {
-    try {
-      const url = BASE_URL + path;
-      const res = await axios.get(url, { 
-        headers, 
-        timeout: 10000, 
-        validateStatus: () => true 
-      });
-      
-      const contentType = String(res.headers['content-type'] || '');
-      const bodyStr = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-      
-      if (contentType.includes('text/html') || bodyStr.trim().startsWith('<!doctype') || bodyStr.trim().startsWith('<html')) {
-        continue; 
-      }
-
-      if (res.status >= 200 && res.status < 300) {
-        return { success: true, data: res.data, message: '✅ Connected successfully via ' + path + '!' };
-      } else if (res.status === 401 || res.status === 403) {
-        return { success: false, message: '❌ Unauthorized [Status ' + res.status + '] on ' + path + ': Token is invalid or expired.' };
-      }
-    } catch (err: any) {
-      // Skip error and try next path
+  try {
+    const res = await axios.get(API_URL, { 
+      headers, 
+      timeout: 15000, 
+      validateStatus: () => true 
+    });
+    
+    if (res.status >= 200 && res.status < 300) {
+      return { success: true, data: res.data, message: '✅ Successfully fetched profile and quest data!' };
+    } else if (res.status === 401 || res.status === 403) {
+      return { success: false, message: '❌ Unauthorized [Status ' + res.status + ']: Token is expired or invalid. Grab a fresh access_token from Cookie-Editor.' };
+    } else {
+      return { success: false, message: '❌ API Error [' + res.status + ']: ' + JSON.stringify(res.data) };
     }
+  } catch (error: any) {
+    return { success: false, message: '❌ Network Error: ' + error.message };
   }
-
-  return { 
-    success: false, 
-    message: '❌ All candidate endpoints returned HTML pages.' 
-  };
 }
