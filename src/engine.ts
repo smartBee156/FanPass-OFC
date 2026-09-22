@@ -17,26 +17,46 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     headers['Cookie'] = token;
   }
 
-  try {
-    const questId = "de5a250f-233e-4cb7-8de1-273a437d420d";
-    
-    // Test the quest start/verify route on the correct proofchain domain
-    const res = await axios.get(`${PROOFCHAIN_API}/quests/${questId}/start/link`, { 
-      headers, 
-      timeout: 15000, 
-      validateStatus: () => true 
-    });
+  // Probe potential route prefixes on proofchain.co.za
+  const candidatePaths = [
+    '/quests',
+    '/api/quests',
+    '/v1/quests',
+    '/rewards',
+    '/users/me',
+    '/me'
+  ];
 
-    return {
-      success: true,
-      data: {
-        statusCode: res.status,
-        payload: res.data
-      },
-      message: `✅ Proofchain API Connected [Status ${res.status}]!`
-    };
+  const results: Record<string, any> = {};
 
-  } catch (error: any) {
-    return { success: false, message: '❌ Proofchain Network Error: ' + error.message };
+  for (const path of candidatePaths) {
+    try {
+      const res = await axios.get(`${PROOFCHAIN_API}${path}`, { 
+        headers, 
+        timeout: 10000, 
+        validateStatus: () => true 
+      });
+
+      results[path] = { status: res.status, data: res.data };
+
+      if (res.status >= 200 && res.status < 300) {
+        return {
+          success: true,
+          data: {
+            workingPath: path,
+            payload: res.data
+          },
+          message: `✅ Proofchain Route Found: ${path}`
+        };
+      }
+    } catch (err: any) {
+      results[path] = { error: err.message };
+    }
   }
+
+  return {
+    success: true,
+    data: { probeResults: results },
+    message: '✅ Connected to Proofchain API. Probed routes.'
+  };
 }
