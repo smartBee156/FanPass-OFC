@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE_API = 'https://api.onefootball.com/fanpass-metagame-backend';
+const BASE_API = 'https://fanpass.proofchain.co.za/api';
 const TENANT_ID = 'tenant_1g6k1cew859ls7408';
 
 function extractUserId(token: string): string | null {
@@ -34,17 +34,17 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     }
 
     const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
-    const userId = extractUserId(token) || 'fe6a740a-4c0a-490f-8bf2-d9189a2b1ef8';
+    const userId = extractUserId(token) || 'afe546fe-0aa9-4a4b-9ff4-81db76b76cdf';
     const encodedUser = encodeURIComponent(userId);
 
     const logs = [];
 
-    // 1. Initialize / Start the quest
+    // 1. Initialize / Start the quest (Proven 200 OK route)
     const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
     const startRes = await axios.post(startUrl, {}, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 2. Loop through all 4 steps (0, 1, 2, 3) using the exact frontend route patterns
+    // 2. Loop through all 4 steps (0, 1, 2, 3) using Bolt's discovered progress paths
     const stepResults = [];
     for (let stepIndex = 0; stepIndex < 4; stepIndex++) {
       const stepStartUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/step/${stepIndex}/start`;
@@ -63,7 +63,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     logs.push({ step: 'STEPS_EXECUTION', results: stepResults });
 
-    // 3. Claim final reward
+    // 3. Claim final reward using Bolt's discovered claim path
     const claimUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`;
     const claimRes = await axios.post(claimUrl, {}, { headers, validateStatus: () => true });
     logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
@@ -73,7 +73,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { userId, questId, logs },
-      message: success ? '🚀 Polymarket Quest Fully Completed & Claimed!' : '⚡ Steps executed. Check response logs for details.'
+      message: success ? '🚀 Polymarket Quest Fully Completed & Claimed!' : '⚡ Steps executed on tenant API. Check response logs.'
     };
 
   } catch (error: any) {
