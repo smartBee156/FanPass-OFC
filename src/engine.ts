@@ -2,6 +2,7 @@ import axios from 'axios';
 
 const BASE_API = 'https://fanpass.proofchain.co.za/api';
 const TENANT_ID = 'tenant_1g6k1cew859ls7408';
+const QUEST_ID = '81ff3b8a-03bf-488c-828c-f60923e96149';
 
 function extractUserId(token: string): string | null {
   try {
@@ -33,38 +34,61 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       headers['Cookie'] = token;
     }
 
-    const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
     const jwtUserId = extractUserId(token) || 'afe546fe-0aa9-4a4b-9ff4-81db76b76cdf';
     const encodedUser = encodeURIComponent(jwtUserId);
     const logs = [];
 
-    // 1. Target balance and sync endpoints explicitly for Base Mainnet
-    const baseMainnetParams = [
-      { network: 'base-mainnet', token: 'USDC' },
-      { chain: 'base', asset: 'USDC' },
-      { network: 'base' }
-    ];
+    // 1. Get Wallet Info
+    const walletsRes = await axios.get(`${BASE_API}/wallets/me`, { headers, validateStatus: () => true });
+    const walletData = walletsRes.data || {};
+    const smartWalletAddress = walletData.wallet_address || '0xbC7859CC04132386C7DF14895ff3a67fA5bFc26b';
+    logs.push({ step: 'GET_WALLETS', wallet: smartWalletAddress });
 
-    const balanceResults = [];
-    for (const params of baseMainnetParams) {
-      const res = await axios.get(`${BASE_API}/wallets/me/balance`, {
-        headers,
-        params,
-        validateStatus: () => true
-      });
-      balanceResults.push({ params, status: res.status, response: res.data });
-      if (res.status >= 200 && res.status < 300) break;
+    // 2. Check Deposit State on Base Mainnet (using Bolt's route pattern)
+    const depositRes = await axios.get(`${BASE_API}/deposits/base/${smartWalletAddress}`, { headers, validateStatus: () => true });
+    logs.push({ step: 'CHECK_DEPOSIT_BASE', status: depositRes.status, response: depositRes.data });
+
+    // 3. Scan Epoch Dates for Merkle Leaf (using Bolt's route pattern)
+    const candidateDates = ['2026-09-23', '2026-09-22', '2026-09-21', '2026-09-20', '2026-09-19', '2026-09-18'];
+    let foundProof: any = null;
+    const epochProbes = [];
+
+    for (const dateStr of candidateDates) {
+      const url = `${BASE_API}/verify/epoch/${dateStr}/leaf/${smartWalletAddress}`;
+      const res = await axios.get(url, { headers, validateStatus: () => true });
+      
+      if (res.status === 200 && res.data && (res.data.leaf || res.data.proof)) {
+        foundProof = { epoch: dateStr, ...res.data };
+        epochProbes.push({ date: dateStr, success: true, response: res.data });
+        break;
+      } else {
+        epochProbes.push({ date: dateStr, status: res.status, response: res.data });
+      }
+    }
+    logs.push({ step: 'EPOCH_LEAF_PROBES', results: epochProbes });
+
+    // 4. If proof is found, submit it
+    if (foundProof && foundProof.leaf && foundProof.proof) {
+      const proofSubRes = await axios.post(`${BASE_API}/verify/proof`, {
+        questId: QUEST_ID,
+        quest_id: QUEST_ID,
+        epoch: foundProof.epoch,
+        address: smartWalletAddress,
+        leaf: foundProof.leaf,
+        proof: foundProof.proof,
+        root: foundProof.root,
+        signature: foundProof.signature || '0x'
+      }, { headers, validateStatus: () => true });
+      logs.push({ step: 'SUBMIT_MERKLE_PROOF', status: proofSubRes.status, response: proofSubRes.data });
     }
 
-    logs.push({ step: 'BASE_MAINNET_BALANCE_PROBES', results: balanceResults });
-
-    // 2. Initialize / Start Quest
-    const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
-    const startRes = await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
+    // 5. Start / Initialize Quest
+    const startUrl = `${BASE_API}/quests/${QUEST_ID}/start?user_id=${encodedUser}`;
+    const startRes = await axios.post(startUrl, { questId: QUEST_ID }, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 3. Attempt Claim Reward
-    const claimUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`;
+    // 6. Attempt Claim Reward
+    const claimUrl = `${BASE_API}/quests/${QUEST_ID}/progress/${encodedUser}/claim`;
     const claimRes = await axios.post(claimUrl, {}, { headers, validateStatus: () => true });
     logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
 
@@ -72,8 +96,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     return {
       success: true,
-      data: { logs },
-      message: success ? '🚀 Quest successfully verified and claimed on Base Mainnet!' : '⚡ Base Mainnet balance probes executed. Check execution logs.'
+      data: { smartWalletAddress, logs },
+      message: success ? '🚀 Quest successfully verified and claimed!' : '⚡ Bolt-integrated pipeline executed. Check execution logs.'
     };
 
   } catch (error: any) {
