@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { randomUUID } from 'crypto';
 
 const BASE_API = 'https://fanpass.proofchain.co.za/api';
 const TENANT_ID = 'tenant_1g6k1cew859ls7408';
@@ -44,46 +45,54 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const smartWalletAddress = walletData.wallet_address || '0xbC7859CC04132386C7DF14895ff3a67fA5bFc26b';
     logs.push({ step: 'GET_WALLETS', wallet: smartWalletAddress });
 
-    // 2. Your actual Polygon transaction hashes from screenshots
+    // Your actual Polygon transaction hashes from your screenshots
     const txHashes = [
       "0x5fd3a620931714fb3a07986f1281e8ae90eea733ae4f455f37cd2eaa7db449d7",
       "0x22415a793904c6dc259f6b804ca7c1bd8434f0ded9989003780137145d09e774"
     ];
 
-    const txSubmissionResults = [];
-    const submitEndpoints = [
-      `${BASE_API}/wallets/me/send/submit`,
-      `${BASE_API}/quests/${questId}/verify-tx`,
-      `${BASE_API}/transactions/verify`,
-      `${BASE_API}/verify/tx`,
-      `${BASE_API}/polymarket/verify-deposit`
-    ];
+    const submissionResults = [];
 
     for (const txHash of txHashes) {
-      for (const url of submitEndpoints) {
-        const sRes = await axios.post(url, {
-          quest_id: questId,
-          tx_hash: txHash,
-          transaction_hash: txHash,
-          wallet_address: smartWalletAddress,
-          network: 'polygon',
-          user_id: jwtUserId
-        }, { headers, validateStatus: () => true });
+      // Step A: Try to call the prepare endpoint to obtain prepare_id and idempotency_key
+      const prepareRes = await axios.post(`${BASE_API}/wallets/me/send/prepare`, {
+        quest_id: questId,
+        tx_hash: txHash,
+        wallet_address: smartWalletAddress,
+        network: 'polygon'
+      }, { headers, validateStatus: () => true });
 
-        if (sRes.status !== 404) {
-          txSubmissionResults.push({ txHash, url, status: sRes.status, response: sRes.data });
-        }
-      }
+      let prepareId = prepareRes.data?.prepare_id || prepareRes.data?.id || randomUUID();
+      let idempotencyKey = prepareRes.data?.idempotency_key || randomUUID();
+
+      // Step B: Submit the transaction with the required keys
+      const submitRes = await axios.post(`${BASE_API}/wallets/me/send/submit`, {
+        quest_id: questId,
+        tx_hash: txHash,
+        transaction_hash: txHash,
+        wallet_address: smartWalletAddress,
+        network: 'polygon',
+        user_id: jwtUserId,
+        prepare_id: prepareId,
+        idempotency_key: idempotencyKey
+      }, { headers, validateStatus: () => true });
+
+      submissionResults.push({
+        txHash,
+        prepareStatus: prepareRes.status,
+        submitStatus: submitRes.status,
+        response: submitRes.data
+      });
     }
 
-    logs.push({ step: 'POLYGON_TX_SUBMISSION', results: txSubmissionResults });
+    logs.push({ step: 'PREPARE_AND_SUBMIT_TX', results: submissionResults });
 
-    // 3. Initialize / Start Quest
+    // 2. Initialize / Start Quest
     const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
     const startRes = await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 4. Attempt Claim
+    // 3. Attempt Claim Reward
     const claimUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`;
     const claimRes = await axios.post(claimUrl, {}, { headers, validateStatus: () => true });
     logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
@@ -93,7 +102,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { smartWalletAddress, logs },
-      message: success ? '🚀 Quest successfully verified and claimed via Polygon TX!' : '⚡ Polygon transaction hashes dispatched. Check execution logs.'
+      message: success ? '🚀 Quest successfully verified and claimed!' : '⚡ Prepare & submit flow executed. Check execution logs.'
     };
 
   } catch (error: any) {
