@@ -38,38 +38,33 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const encodedUser = encodeURIComponent(jwtUserId);
     const logs = [];
 
-    // 1. Fetch wallet address
+    // 1. Get smart wallet address
     const walletsRes = await axios.get(`${BASE_API}/wallets/me`, { headers, validateStatus: () => true });
     const walletData = walletsRes.data || {};
     const smartWalletAddress = walletData.wallet_address || '0xbC7859CC04132386C7DF14895ff3a67fA5bFc26b';
 
     logs.push({ step: 'GET_WALLETS', wallet: smartWalletAddress });
 
-    // 2. Probe Merkle Epoch & Batch verification routes discovered in frontend bundles
-    const merkleProbes = [
-      `${BASE_API}/verify/batch/${questId}`,
-      `${BASE_API}/verify/batch/${smartWalletAddress}`,
-      `${BASE_API}/verify/epoch/latest/leaf/${smartWalletAddress}`,
-      `${BASE_API}/verify/epoch/1/leaf/${smartWalletAddress}`,
-      `${BASE_API}/verify/epoch/0/leaf/${smartWalletAddress}`,
-      `${BASE_API}/quests/${questId}/verify/proof`
-    ];
-
-    const merkleResults = [];
+    // 2. Query the epoch leaf route using valid YYYY-MM-DD date strings
+    // Testing recent dates and around the wallet creation date (Sept 18-23, 2026)
+    const candidateDates = ['2026-09-23', '2026-09-22', '2026-09-21', '2026-09-20', '2026-09-19', '2026-09-18'];
     let foundProof: any = null;
+    const epochProbes = [];
 
-    for (const url of merkleProbes) {
+    for (const dateStr of candidateDates) {
+      const url = `${BASE_API}/verify/epoch/${dateStr}/leaf/${smartWalletAddress}`;
       const res = await axios.get(url, { headers, validateStatus: () => true });
-      merkleResults.push({ url, status: res.status, response: res.data });
+      epochProbes.push({ date: dateStr, status: res.status, response: res.data });
+
       if (res.status >= 200 && res.status < 300 && res.data && (res.data.leaf || res.data.proof)) {
         foundProof = res.data;
         break;
       }
     }
 
-    logs.push({ step: 'MERKLE_PROBES', results: merkleResults });
+    logs.push({ step: 'EPOCH_DATE_PROBES', results: epochProbes });
 
-    // 3. If proof data is found, submit it to /verify/proof
+    // 3. If proof data is retrieved successfully, submit it to /verify/proof
     if (foundProof && foundProof.leaf && foundProof.proof && foundProof.root) {
       const verifyRes = await axios.post(`${BASE_API}/verify/proof`, {
         questId,
@@ -79,23 +74,23 @@ export async function pollAccountVerification(input: string): Promise<{ success:
         root: foundProof.root
       }, { headers, validateStatus: () => true });
 
-      logs.push({ step: 'SUBMIT_FOUND_PROOF', status: verifyRes.status, response: verifyRes.data });
+      logs.push({ step: 'SUBMIT_VERIFY_PROOF', status: verifyRes.status, response: verifyRes.data });
     }
 
-    // 4. Re-check progress & attempt claim
+    // 4. Trigger Start/Progress check & Claim Reward
     const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
-    const startRes = await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
-    logs.push({ step: 'RE_CHECK_PROGRESS', status: startRes.status, response: startRes.data });
+    await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
 
-    const claimRes = await axios.post(`${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`, {}, { headers, validateStatus: () => true });
-    logs.push({ step: 'CLAIM_ATTEMPT', status: claimRes.status, response: claimRes.data });
+    const claimUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`;
+    const claimRes = await axios.post(claimUrl, {}, { headers, validateStatus: () => true });
+    logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
 
     const success = claimRes.status >= 200 && claimRes.status < 300;
 
     return {
       success: true,
-      data: { smartWalletAddress, logs },
-      message: success ? '🚀 Quest verified and claimed successfully!' : '⚡ Merkle epoch and batch probes executed. Check execution logs.'
+      data: { smartWalletAddress, foundProof, logs },
+      message: success ? '🚀 Polymarket Quest Verified & Claimed Successfully!' : '⚡ Epoch date queries executed. Check logs for proof return.'
     };
 
   } catch (error: any) {
