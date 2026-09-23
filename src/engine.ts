@@ -38,55 +38,64 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const encodedUser = encodeURIComponent(jwtUserId);
     const logs = [];
 
-    // 1. Get your verified wallet info
+    // 1. Fetch wallet address
     const walletsRes = await axios.get(`${BASE_API}/wallets/me`, { headers, validateStatus: () => true });
     const walletData = walletsRes.data || {};
     const smartWalletAddress = walletData.wallet_address || '0xbC7859CC04132386C7DF14895ff3a67fA5bFc26b';
 
-    logs.push({ step: 'GET_WALLETS', status: walletsRes.status, wallet: smartWalletAddress });
+    logs.push({ step: 'GET_WALLETS', wallet: smartWalletAddress });
 
-    // 2. Probe Polymarket & Deposit synchronization endpoints
-    const polymarketEndpoints = [
-      `${BASE_API}/polymarket/sync`,
-      `${BASE_API}/polymarket/verify-deposit`,
-      `${BASE_API}/quests/${questId}/polymarket/sync`,
-      `${BASE_API}/quests/${questId}/verify`,
-      `${BASE_API}/users/me/polymarket`
+    // 2. Probe Merkle Epoch & Batch verification routes discovered in frontend bundles
+    const merkleProbes = [
+      `${BASE_API}/verify/batch/${questId}`,
+      `${BASE_API}/verify/batch/${smartWalletAddress}`,
+      `${BASE_API}/verify/epoch/latest/leaf/${smartWalletAddress}`,
+      `${BASE_API}/verify/epoch/1/leaf/${smartWalletAddress}`,
+      `${BASE_API}/verify/epoch/0/leaf/${smartWalletAddress}`,
+      `${BASE_API}/quests/${questId}/verify/proof`
     ];
 
-    const syncResults = [];
-    for (const url of polymarketEndpoints) {
-      for (const method of ['post', 'get']) {
-        const pRes = await axios({
-          method,
-          url,
-          headers,
-          data: method === 'post' ? { quest_id: questId, wallet_address: smartWalletAddress, user_id: jwtUserId } : undefined,
-          params: method === 'get' ? { wallet_address: smartWalletAddress } : undefined,
-          validateStatus: () => true
-        });
+    const merkleResults = [];
+    let foundProof: any = null;
 
-        if (pRes.status !== 404) {
-          syncResults.push({
-            attempt: `${method.toUpperCase()} ${url}`,
-            status: pRes.status,
-            response: pRes.data
-          });
-        }
+    for (const url of merkleProbes) {
+      const res = await axios.get(url, { headers, validateStatus: () => true });
+      merkleResults.push({ url, status: res.status, response: res.data });
+      if (res.status >= 200 && res.status < 300 && res.data && (res.data.leaf || res.data.proof)) {
+        foundProof = res.data;
+        break;
       }
     }
 
-    logs.push({ step: 'POLYMARKET_SYNC_PROBES', results: syncResults });
+    logs.push({ step: 'MERKLE_PROBES', results: merkleResults });
 
-    // 3. Re-check progress
+    // 3. If proof data is found, submit it to /verify/proof
+    if (foundProof && foundProof.leaf && foundProof.proof && foundProof.root) {
+      const verifyRes = await axios.post(`${BASE_API}/verify/proof`, {
+        questId,
+        user_id: jwtUserId,
+        leaf: foundProof.leaf,
+        proof: foundProof.proof,
+        root: foundProof.root
+      }, { headers, validateStatus: () => true });
+
+      logs.push({ step: 'SUBMIT_FOUND_PROOF', status: verifyRes.status, response: verifyRes.data });
+    }
+
+    // 4. Re-check progress & attempt claim
     const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
     const startRes = await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
     logs.push({ step: 'RE_CHECK_PROGRESS', status: startRes.status, response: startRes.data });
 
+    const claimRes = await axios.post(`${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`, {}, { headers, validateStatus: () => true });
+    logs.push({ step: 'CLAIM_ATTEMPT', status: claimRes.status, response: claimRes.data });
+
+    const success = claimRes.status >= 200 && claimRes.status < 300;
+
     return {
       success: true,
       data: { smartWalletAddress, logs },
-      message: '🔍 Polymarket deposit sync probes executed. Check execution logs!'
+      message: success ? '🚀 Quest verified and claimed successfully!' : '⚡ Merkle epoch and batch probes executed. Check execution logs.'
     };
 
   } catch (error: any) {
