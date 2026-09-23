@@ -38,49 +38,52 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const encodedUser = encodeURIComponent(jwtUserId);
     const logs = [];
 
-    // 1. Get smart wallet address
+    // 1. Get Wallet Info
     const walletsRes = await axios.get(`${BASE_API}/wallets/me`, { headers, validateStatus: () => true });
     const walletData = walletsRes.data || {};
     const smartWalletAddress = walletData.wallet_address || '0xbC7859CC04132386C7DF14895ff3a67fA5bFc26b';
-
     logs.push({ step: 'GET_WALLETS', wallet: smartWalletAddress });
 
-    // 2. Query the epoch leaf route using valid YYYY-MM-DD date strings
-    // Testing recent dates and around the wallet creation date (Sept 18-23, 2026)
-    const candidateDates = ['2026-09-23', '2026-09-22', '2026-09-21', '2026-09-20', '2026-09-19', '2026-09-18'];
-    let foundProof: any = null;
-    const epochProbes = [];
+    // 2. Your actual Polygon transaction hashes from screenshots
+    const txHashes = [
+      "0x5fd3a620931714fb3a07986f1281e8ae90eea733ae4f455f37cd2eaa7db449d7",
+      "0x22415a793904c6dc259f6b804ca7c1bd8434f0ded9989003780137145d09e774"
+    ];
 
-    for (const dateStr of candidateDates) {
-      const url = `${BASE_API}/verify/epoch/${dateStr}/leaf/${smartWalletAddress}`;
-      const res = await axios.get(url, { headers, validateStatus: () => true });
-      epochProbes.push({ date: dateStr, status: res.status, response: res.data });
+    const txSubmissionResults = [];
+    const submitEndpoints = [
+      `${BASE_API}/wallets/me/send/submit`,
+      `${BASE_API}/quests/${questId}/verify-tx`,
+      `${BASE_API}/transactions/verify`,
+      `${BASE_API}/verify/tx`,
+      `${BASE_API}/polymarket/verify-deposit`
+    ];
 
-      if (res.status >= 200 && res.status < 300 && res.data && (res.data.leaf || res.data.proof)) {
-        foundProof = res.data;
-        break;
+    for (const txHash of txHashes) {
+      for (const url of submitEndpoints) {
+        const sRes = await axios.post(url, {
+          quest_id: questId,
+          tx_hash: txHash,
+          transaction_hash: txHash,
+          wallet_address: smartWalletAddress,
+          network: 'polygon',
+          user_id: jwtUserId
+        }, { headers, validateStatus: () => true });
+
+        if (sRes.status !== 404) {
+          txSubmissionResults.push({ txHash, url, status: sRes.status, response: sRes.data });
+        }
       }
     }
 
-    logs.push({ step: 'EPOCH_DATE_PROBES', results: epochProbes });
+    logs.push({ step: 'POLYGON_TX_SUBMISSION', results: txSubmissionResults });
 
-    // 3. If proof data is retrieved successfully, submit it to /verify/proof
-    if (foundProof && foundProof.leaf && foundProof.proof && foundProof.root) {
-      const verifyRes = await axios.post(`${BASE_API}/verify/proof`, {
-        questId,
-        user_id: jwtUserId,
-        leaf: foundProof.leaf,
-        proof: foundProof.proof,
-        root: foundProof.root
-      }, { headers, validateStatus: () => true });
-
-      logs.push({ step: 'SUBMIT_VERIFY_PROOF', status: verifyRes.status, response: verifyRes.data });
-    }
-
-    // 4. Trigger Start/Progress check & Claim Reward
+    // 3. Initialize / Start Quest
     const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
-    await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
+    const startRes = await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
+    logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
+    // 4. Attempt Claim
     const claimUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`;
     const claimRes = await axios.post(claimUrl, {}, { headers, validateStatus: () => true });
     logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
@@ -89,8 +92,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     return {
       success: true,
-      data: { smartWalletAddress, foundProof, logs },
-      message: success ? '🚀 Polymarket Quest Verified & Claimed Successfully!' : '⚡ Epoch date queries executed. Check logs for proof return.'
+      data: { smartWalletAddress, logs },
+      message: success ? '🚀 Quest successfully verified and claimed via Polygon TX!' : '⚡ Polygon transaction hashes dispatched. Check execution logs.'
     };
 
   } catch (error: any) {
