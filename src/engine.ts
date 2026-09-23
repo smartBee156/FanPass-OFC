@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { randomUUID } from 'crypto';
 
 const BASE_API = 'https://fanpass.proofchain.co.za/api';
 const TENANT_ID = 'tenant_1g6k1cew859ls7408';
@@ -39,53 +38,30 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const encodedUser = encodeURIComponent(jwtUserId);
     const logs = [];
 
-    // 1. Get Wallet Info
-    const walletsRes = await axios.get(`${BASE_API}/wallets/me`, { headers, validateStatus: () => true });
-    const walletData = walletsRes.data || {};
-    const smartWalletAddress = walletData.wallet_address || '0xbC7859CC04132386C7DF14895ff3a67fA5bFc26b';
-    logs.push({ step: 'GET_WALLETS', wallet: smartWalletAddress });
-
-    // Your actual Polygon transaction hashes from your screenshots
-    const txHashes = [
-      "0x5fd3a620931714fb3a07986f1281e8ae90eea733ae4f455f37cd2eaa7db449d7",
-      "0x22415a793904c6dc259f6b804ca7c1bd8434f0ded9989003780137145d09e774"
+    // 1. Check wallet and balance endpoints
+    const balanceEndpoints = [
+      `${BASE_API}/wallets/me/balance`,
+      `${BASE_API}/users/me/balance`,
+      `${BASE_API}/polymarket/balance`,
+      `${BASE_API}/users/me/refresh`,
+      `${BASE_API}/profile/refresh`
     ];
 
-    const submissionResults = [];
-
-    for (const txHash of txHashes) {
-      // Step A: Try to call the prepare endpoint to obtain prepare_id and idempotency_key
-      const prepareRes = await axios.post(`${BASE_API}/wallets/me/send/prepare`, {
-        quest_id: questId,
-        tx_hash: txHash,
-        wallet_address: smartWalletAddress,
-        network: 'polygon'
-      }, { headers, validateStatus: () => true });
-
-      let prepareId = prepareRes.data?.prepare_id || prepareRes.data?.id || randomUUID();
-      let idempotencyKey = prepareRes.data?.idempotency_key || randomUUID();
-
-      // Step B: Submit the transaction with the required keys
-      const submitRes = await axios.post(`${BASE_API}/wallets/me/send/submit`, {
-        quest_id: questId,
-        tx_hash: txHash,
-        transaction_hash: txHash,
-        wallet_address: smartWalletAddress,
-        network: 'polygon',
-        user_id: jwtUserId,
-        prepare_id: prepareId,
-        idempotency_key: idempotencyKey
-      }, { headers, validateStatus: () => true });
-
-      submissionResults.push({
-        txHash,
-        prepareStatus: prepareRes.status,
-        submitStatus: submitRes.status,
-        response: submitRes.data
-      });
+    const balanceResults = [];
+    for (const url of balanceEndpoints) {
+      for (const method of ['get', 'post']) {
+        const res = await axios({
+          method,
+          url,
+          headers,
+          validateStatus: () => true
+        });
+        if (res.status !== 404) {
+          balanceResults.push({ attempt: `${method.toUpperCase()} ${url}`, status: res.status, response: res.data });
+        }
+      }
     }
-
-    logs.push({ step: 'PREPARE_AND_SUBMIT_TX', results: submissionResults });
+    logs.push({ step: 'BALANCE_AND_REFRESH_PROBES', results: balanceResults });
 
     // 2. Initialize / Start Quest
     const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
@@ -101,8 +77,8 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     return {
       success: true,
-      data: { smartWalletAddress, logs },
-      message: success ? '🚀 Quest successfully verified and claimed!' : '⚡ Prepare & submit flow executed. Check execution logs.'
+      data: { logs },
+      message: success ? '🚀 Quest successfully verified and claimed!' : '⚡ Balance and refresh probes executed. Check execution logs.'
     };
 
   } catch (error: any) {
