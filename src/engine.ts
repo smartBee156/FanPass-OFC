@@ -38,30 +38,25 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const encodedUser = encodeURIComponent(jwtUserId);
     const logs = [];
 
-    // 1. Check wallet and balance endpoints
-    const balanceEndpoints = [
-      `${BASE_API}/wallets/me/balance`,
-      `${BASE_API}/users/me/balance`,
-      `${BASE_API}/polymarket/balance`,
-      `${BASE_API}/users/me/refresh`,
-      `${BASE_API}/profile/refresh`
+    // 1. Target balance and sync endpoints explicitly for Base Mainnet
+    const baseMainnetParams = [
+      { network: 'base-mainnet', token: 'USDC' },
+      { chain: 'base', asset: 'USDC' },
+      { network: 'base' }
     ];
 
     const balanceResults = [];
-    for (const url of balanceEndpoints) {
-      for (const method of ['get', 'post']) {
-        const res = await axios({
-          method,
-          url,
-          headers,
-          validateStatus: () => true
-        });
-        if (res.status !== 404) {
-          balanceResults.push({ attempt: `${method.toUpperCase()} ${url}`, status: res.status, response: res.data });
-        }
-      }
+    for (const params of baseMainnetParams) {
+      const res = await axios.get(`${BASE_API}/wallets/me/balance`, {
+        headers,
+        params,
+        validateStatus: () => true
+      });
+      balanceResults.push({ params, status: res.status, response: res.data });
+      if (res.status >= 200 && res.status < 300) break;
     }
-    logs.push({ step: 'BALANCE_AND_REFRESH_PROBES', results: balanceResults });
+
+    logs.push({ step: 'BASE_MAINNET_BALANCE_PROBES', results: balanceResults });
 
     // 2. Initialize / Start Quest
     const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
@@ -78,7 +73,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { logs },
-      message: success ? '🚀 Quest successfully verified and claimed!' : '⚡ Balance and refresh probes executed. Check execution logs.'
+      message: success ? '🚀 Quest successfully verified and claimed on Base Mainnet!' : '⚡ Base Mainnet balance probes executed. Check execution logs.'
     };
 
   } catch (error: any) {
