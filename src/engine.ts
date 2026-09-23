@@ -38,45 +38,47 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const encodedUser = encodeURIComponent(jwtUserId);
     const logs = [];
 
-    // 1. Fetch wallet info to get the exact smart wallet address
+    // 1. Get your verified wallet info
     const walletsRes = await axios.get(`${BASE_API}/wallets/me`, { headers, validateStatus: () => true });
-    logs.push({ step: 'GET_WALLETS', status: walletsRes.status, response: walletsRes.data });
-
     const walletData = walletsRes.data || {};
     const smartWalletAddress = walletData.wallet_address || '0xbC7859CC04132386C7DF14895ff3a67fA5bFc26b';
 
-    // 2. Test path-based wallet verification endpoints that avoid the 500 query error
-    const verifyPaths = [
-      `${BASE_API}/wallets/${smartWalletAddress}/verify`,
-      `${BASE_API}/wallets/verify/${smartWalletAddress}`,
-      `${BASE_API}/quests/${questId}/verify-deposit`,
-      `${BASE_API}/users/me/verify-deposit`
+    logs.push({ step: 'GET_WALLETS', status: walletsRes.status, wallet: smartWalletAddress });
+
+    // 2. Probe Polymarket & Deposit synchronization endpoints
+    const polymarketEndpoints = [
+      `${BASE_API}/polymarket/sync`,
+      `${BASE_API}/polymarket/verify-deposit`,
+      `${BASE_API}/quests/${questId}/polymarket/sync`,
+      `${BASE_API}/quests/${questId}/verify`,
+      `${BASE_API}/users/me/polymarket`
     ];
 
-    const verifyResults = [];
-    for (const url of verifyPaths) {
-      for (const method of ['get', 'post']) {
-        const vRes = await axios({
+    const syncResults = [];
+    for (const url of polymarketEndpoints) {
+      for (const method of ['post', 'get']) {
+        const pRes = await axios({
           method,
           url,
           headers,
-          data: method === 'post' ? { quest_id: questId, address: smartWalletAddress } : undefined,
+          data: method === 'post' ? { quest_id: questId, wallet_address: smartWalletAddress, user_id: jwtUserId } : undefined,
+          params: method === 'get' ? { wallet_address: smartWalletAddress } : undefined,
           validateStatus: () => true
         });
 
-        if (vRes.status !== 404) {
-          verifyResults.push({
+        if (pRes.status !== 404) {
+          syncResults.push({
             attempt: `${method.toUpperCase()} ${url}`,
-            status: vRes.status,
-            response: vRes.data
+            status: pRes.status,
+            response: pRes.data
           });
         }
       }
     }
 
-    logs.push({ step: 'PATH_VERIFY_PROBES', results: verifyResults });
+    logs.push({ step: 'POLYMARKET_SYNC_PROBES', results: syncResults });
 
-    // 3. Re-check progress cleanly with user_id query parameter
+    // 3. Re-check progress
     const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
     const startRes = await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
     logs.push({ step: 'RE_CHECK_PROGRESS', status: startRes.status, response: startRes.data });
@@ -84,7 +86,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { smartWalletAddress, logs },
-      message: '🔍 Path-based verification and sync triggered. Check logs!'
+      message: '🔍 Polymarket deposit sync probes executed. Check execution logs!'
     };
 
   } catch (error: any) {
