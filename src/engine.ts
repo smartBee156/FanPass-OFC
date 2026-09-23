@@ -3,18 +3,6 @@ import axios from 'axios';
 const BASE_API = 'https://fanpass.proofchain.co.za/api';
 const TENANT_ID = 'tenant_1g6k1cew859ls7408';
 
-function extractUserId(token: string): string | null {
-  try {
-    if (!token.startsWith('eyJ')) return null;
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-    return payload.sub || payload.user_id || payload.id || payload.uid || null;
-  } catch (e) {
-    return null;
-  }
-}
-
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   try {
     const token = input.trim();
@@ -34,54 +22,57 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     }
 
     const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
-    const jwtUserId = extractUserId(token) || 'afe546fe-0aa9-4a4b-9ff4-81db76b76cdf';
-    const encodedUser = encodeURIComponent(jwtUserId);
     const logs = [];
 
-    // 1. Initialize / Start quest with guaranteed query parameter user_id
-    const startUrl = `${BASE_API}/quests/${questId}/start?user_id=${encodedUser}`;
-    const startRes = await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
-    logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
+    // 1. Fetch wallet/profile info first to get the exact smart wallet address
+    const walletsRes = await axios.get(`${BASE_API}/wallets/me`, { headers, validateStatus: () => true });
+    logs.push({ step: 'GET_WALLETS', status: walletsRes.status, response: walletsRes.data });
 
-    // 2. Probe user profile, wallets, and deposit/polymarket status endpoints to force sync
-    const probeEndpoints = [
-      `${BASE_API}/users/me`,
-      `${BASE_API}/wallets/me`,
-      `${BASE_API}/users/${encodedUser}/wallets`,
-      `${BASE_API}/polymarket/status`,
-      `${BASE_API}/polymarket/verify`,
-      `${BASE_API}/quests/${questId}/progress/${encodedUser}/refresh`,
-      `${BASE_API}/quests/user/${encodedUser}/progress`,
-      `${BASE_API}/wallets/verify`
+    const walletData = walletsRes.data || {};
+    const smartWalletAddress = walletData.wallet_address || '0xbC7859CC04132386C7DF14895ff3a67fA5bFc26b';
+    const cdpUserId = walletData.cdp_user_id;
+
+    // 2. Target /api/wallets/verify with payload variations to force deposit synchronization
+    const verifyPayloads = [
+      { address: smartWalletAddress, network: 'base-mainnet', quest_id: questId },
+      { wallet_address: smartWalletAddress, cdp_user_id: cdpUserId },
+      { questId, walletAddress: smartWalletAddress }
     ];
 
-    const probeResults = [];
-    for (const url of probeEndpoints) {
-      for (const method of ['get', 'post']) {
-        const pRes = await axios({
+    const verifyResults = [];
+    for (const payload of verifyPayloads) {
+      for (const method of ['post', 'get']) {
+        const vRes = await axios({
           method,
-          url,
+          url: `${BASE_API}/wallets/verify`,
           headers,
-          data: { questId, user_id: jwtUserId },
+          data: method === 'post' ? payload : undefined,
+          params: method === 'get' ? payload : undefined,
           validateStatus: () => true
         });
 
-        if (pRes.status !== 404) {
-          probeResults.push({
-            attempt: `${method.toUpperCase()} ${url}`,
-            status: pRes.status,
-            response: pRes.data
-          });
-        }
+        verifyResults.push({
+          method: method.toUpperCase(),
+          payload,
+          status: vRes.status,
+          response: vRes.data
+        });
+
+        if (vRes.status >= 200 && vRes.status < 300) break;
       }
     }
 
-    logs.push({ step: 'ACCOUNT_PROBES', results: probeResults });
+    logs.push({ step: 'WALLET_VERIFY_TRIGGER', results: verifyResults });
+
+    // 3. Check progress again to see if steps ticked
+    const startUrl = `${BASE_API}/quests/${questId}/start`;
+    const startRes = await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
+    logs.push({ step: 'RE_CHECK_PROGRESS', status: startRes.status, response: startRes.data });
 
     return {
       success: true,
-      data: { jwtUserId, logs },
-      message: '🔍 Deposit & wallet sync probes completed. Check execution logs.'
+      data: { smartWalletAddress, logs },
+      message: '⚡ Wallet verification sync triggered. Check execution logs!'
     };
 
   } catch (error: any) {
