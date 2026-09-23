@@ -3,18 +3,6 @@ import axios from 'axios';
 const BASE_API = 'https://fanpass.proofchain.co.za/api';
 const TENANT_ID = 'tenant_1g6k1cew859ls7408';
 
-function extractUserId(token: string): string | null {
-  try {
-    if (!token.startsWith('eyJ')) return null;
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-    return payload.sub || payload.user_id || payload.id || payload.uid || null;
-  } catch (e) {
-    return null;
-  }
-}
-
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   try {
     const token = input.trim();
@@ -34,52 +22,61 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     }
 
     const questId = '81ff3b8a-03bf-488c-828c-f60923e96149';
-    const jwtUserId = extractUserId(token);
     const logs = [];
 
-    // 1. Initialize / Start the quest with query parameter user_id (proven 200 OK format)
-    const startUrl = jwtUserId 
-      ? `${BASE_API}/quests/${questId}/start?user_id=${encodeURIComponent(jwtUserId)}`
-      : `${BASE_API}/quests/${questId}/start`;
-
+    // 1. Initialize / Start quest
+    const startUrl = `${BASE_API}/quests/${questId}/start`;
     const startRes = await axios.post(startUrl, { questId }, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
     const serverInstance = startRes.data || {};
-    const actualUserId = jwtUserId || serverInstance.user_id || serverInstance.userId;
+    const actualUserId = serverInstance.user_id;
 
     if (!actualUserId) {
-      return { success: false, data: { logs }, message: '❌ Failed to determine user_id from token or server.' };
+      return { success: false, data: { logs }, message: '❌ Could not retrieve user_id from start response.' };
     }
 
     const encodedUser = encodeURIComponent(actualUserId);
-    const userQuestId = serverInstance.id;
 
-    // 2. Fetch live progress
-    const progressUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}`;
-    const progressRes = await axios.get(progressUrl, { headers, validateStatus: () => true });
-    logs.push({ step: 'GET_PROGRESS', status: progressRes.status, response: progressRes.data });
+    // 2. Probe user profile, wallets, and deposit/polymarket status endpoints
+    const probeEndpoints = [
+      `${BASE_API}/users/me`,
+      `${BASE_API}/wallets/me`,
+      `${BASE_API}/users/${encodedUser}/wallets`,
+      `${BASE_API}/polymarket/status`,
+      `${BASE_API}/polymarket/verify`,
+      `${BASE_API}/quests/${questId}/progress/${encodedUser}/refresh`,
+      `${BASE_API}/quests/user/${encodedUser}/progress`,
+      `${BASE_API}/wallets/verify`
+    ];
 
-    // 3. Step completion attempts
-    const stepResults = [];
-    for (let stepIndex = 0; stepIndex < 4; stepIndex++) {
-      const stepCompleteUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/step/${stepIndex}/complete`;
-      const sComplete = await axios.post(stepCompleteUrl, { user_quest_id: userQuestId }, { headers, validateStatus: () => true });
-      stepResults.push({ step: stepIndex, status: sComplete.status, response: sComplete.data });
+    const probeResults = [];
+    for (const url of probeEndpoints) {
+      for (const method of ['get', 'post']) {
+        const pRes = await axios({
+          method,
+          url,
+          headers,
+          data: { questId, user_id: actualUserId },
+          validateStatus: () => true
+        });
+
+        if (pRes.status !== 404) { // Only log meaningful non-404 responses or check everything
+          probeResults.push({
+            attempt: `${method.toUpperCase()} ${url}`,
+            status: pRes.status,
+            response: pRes.data
+          });
+        }
+      }
     }
-    logs.push({ step: 'STEPS_EXECUTION', results: stepResults });
 
-    // 4. Claim reward
-    const claimUrl = `${BASE_API}/quests/${questId}/progress/${encodedUser}/claim`;
-    const claimRes = await axios.post(claimUrl, { user_quest_id: userQuestId }, { headers, validateStatus: () => true });
-    logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
-
-    const success = claimRes.status >= 200 && claimRes.status < 300;
+    logs.push({ step: 'ACCOUNT_PROBES', results: probeResults });
 
     return {
       success: true,
-      data: { actualUserId, userQuestId, logs },
-      message: success ? '🚀 Polymarket Quest Successfully Completed & Claimed!' : '⚡ Execution completed. Check logs.'
+      data: { actualUserId, logs },
+      message: '🔍 Account probes executed. Check logs for active deposit/wallet endpoints.'
     };
 
   } catch (error: any) {
