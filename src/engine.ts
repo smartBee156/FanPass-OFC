@@ -4,38 +4,35 @@ const BASE_API = 'https://api.proofchain.co.za';
 const TENANT_ID = 'tenant_b56f41ce3351a7d08';
 const QUEST_ID = '81ff3b8a-03bf-488c-828c-f60923e96149';
 
-function extractUserId(token: string): string | null {
-  try {
-    if (!token.startsWith('eyJ')) return null;
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-    return payload.sub || payload.user_id || payload.id || payload.uid || null;
-  } catch (e) {
-    return null;
-  }
-}
-
 export async function pollAccountVerification(input: string): Promise<{ success: boolean; data?: any; message: string }> {
   try {
     const token = input.trim();
+    
+    // Bulletproof headers with dual auth (Bearer + Cookie) and dual-case tenant IDs
     const headers: Record<string, string> = {
       'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
       'Accept': 'application/json, text/plain, */*',
       'Origin': 'https://fanpass.onefootball.com',
       'Referer': 'https://fanpass.onefootball.com/',
       'X-Tenant-ID': TENANT_ID,
+      'X-Tenant-id': TENANT_ID,
+      'Authorization': `Bearer ${token}`,
+      'Cookie': `access_token=${token}; token=${token}`,
       'Content-Type': 'application/json'
     };
 
-    if (token.startsWith('eyJ')) {
-      headers['Authorization'] = 'Bearer ' + token;
-    } else {
-      headers['Cookie'] = token;
-    }
-
     const logs = [];
-    const jwtUserId = extractUserId(token) || 'afe546fe-0aa9-4a4b-9ff4-81db76b76cdf';
+
+    // Extract user ID safely from the JWT payload middle section
+    let jwtUserId = 'afe546fe-0aa9-4a4b-9ff4-81db76b76cdf';
+    try {
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+        jwtUserId = payload.sub || payload.user_id || jwtUserId;
+      }
+    } catch (e) {}
+
     const encodedUser = encodeURIComponent(jwtUserId);
 
     // 1. Fetch Wallets
@@ -48,7 +45,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const startRes = await axios.post(startUrl, { questId: QUEST_ID }, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 3. Intelligent Polling Loop (Forces backend indexer re-evaluation)
+    // 3. Polling Loop for Progress
     let questState: any = null;
     let attempts = 0;
     const maxAttempts = 3;
@@ -65,11 +62,10 @@ export async function pollAccountVerification(input: string): Promise<{ success:
         break;
       }
       
-      // Wait 2 seconds between polls to let the backend indexer update
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
-    // 4. Attempt Claim if condition is met or force it
+    // 4. Attempt Claim
     let claimRes: any = { status: 400, data: { detail: 'Not ready for claim yet' } };
     if (questState?.can_claim || questState?.completion_percentage === 100 || attempts >= maxAttempts) {
       const claimUrl = `${BASE_API}/quests/${QUEST_ID}/progress/${encodedUser}/claim`;
@@ -82,7 +78,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { smartWalletAddress, logs },
-      message: success ? '🚀 Quest verified and successfully claimed!' : '⚡ Execution completed. Check logs for account status.'
+      message: success ? '🚀 Quest verified and successfully claimed!' : '⚡ Execution completed with dual-auth headers. Check logs.'
     };
 
   } catch (error: any) {
