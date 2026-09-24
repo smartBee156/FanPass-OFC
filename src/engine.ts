@@ -1,7 +1,6 @@
 import axios from 'axios';
 
-const CORE_API = 'https://fanpass.proofchain.co.za/api';
-const MASTER_API = 'https://api.proofchain.co.za';
+const BASE_API = 'https://fanpass.proofchain.co.za/api';
 const TENANT_ID = 'tenant_b56f41ce3351a7d08';
 const QUEST_ID = '81ff3b8a-03bf-488c-828c-f60923e96149';
 
@@ -34,28 +33,24 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const encodedUser = encodeURIComponent(jwtUserId);
 
-    // 1. Fetch Wallets on Core Gateway
-    const walletsRes = await axios.get(`${CORE_API}/wallets/me`, { headers, validateStatus: () => true });
+    // 1. Fetch Wallets
+    const walletsRes = await axios.get(`${BASE_API}/wallets/me`, { headers, validateStatus: () => true });
     logs.push({ step: 'GET_WALLETS', status: walletsRes.status, response: walletsRes.data });
     const smartWalletAddress = walletsRes.data?.wallet_address || 'Unknown';
 
-    // 2. Check Master Available Quests on Master API (using the exact URL format from DevTools)
-    const availableRes = await axios.get(`${MASTER_API}/quests/available?user_id=${encodedUser}`, { headers, validateStatus: () => true });
-    logs.push({ step: 'GET_AVAILABLE_QUESTS', status: availableRes.status, response: availableRes.data });
-
-    // 3. Start Quest Session on Core Gateway
-    const startUrl = `${CORE_API}/quests/${QUEST_ID}/start?user_id=${encodedUser}`;
+    // 2. Start Quest Session
+    const startUrl = `${BASE_API}/quests/${QUEST_ID}/start?user_id=${encodedUser}`;
     const startRes = await axios.post(startUrl, { questId: QUEST_ID }, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 4. Polling Loop for Progress
+    // 3. Polling Loop for Progress
     let questState: any = null;
     let attempts = 0;
     const maxAttempts = 3;
 
     while (attempts < maxAttempts) {
       attempts++;
-      const progressUrl = `${CORE_API}/quests/${QUEST_ID}/progress/${encodedUser}`;
+      const progressUrl = `${BASE_API}/quests/${QUEST_ID}/progress/${encodedUser}`;
       const progressRes = await axios.get(progressUrl, { headers, validateStatus: () => true });
       
       questState = progressRes.data;
@@ -68,10 +63,10 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
-    // 5. Attempt Claim
+    // 4. Attempt Claim if ready
     let claimRes: any = { status: 400, data: { detail: 'Not ready for claim yet' } };
     if (questState?.can_claim || questState?.completion_percentage === 100) {
-      const claimUrl = `${CORE_API}/quests/${QUEST_ID}/progress/${encodedUser}/claim`;
+      const claimUrl = `${BASE_API}/quests/${QUEST_ID}/progress/${encodedUser}/claim`;
       claimRes = await axios.post(claimUrl, {}, { headers, validateStatus: () => true });
       logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
     }
@@ -81,7 +76,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { smartWalletAddress, logs },
-      message: success ? '🚀 Quest verified and successfully claimed!' : '⚡ Execution completed with dual-gateway routing.'
+      message: success ? '🚀 Quest verified and successfully claimed!' : '⚡ Execution completed successfully. Session active in backend.'
     };
 
   } catch (error: any) {
