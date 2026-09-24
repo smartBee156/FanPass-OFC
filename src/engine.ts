@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE_API = 'https://fanpass.onefootball.com/api';
+const BASE_API = 'https://fanpass.proofchain.co.za/api';
 const TENANT_ID = 'tenant_b56f41ce3351a7d08';
 const QUEST_ID = '81ff3b8a-03bf-488c-828c-f60923e96149';
 
@@ -33,7 +33,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const encodedUser = encodeURIComponent(jwtUserId);
 
-    // 1. Fetch Wallets
+    // 1. Fetch Wallets on Correct API Gateway
     const walletsRes = await axios.get(`${BASE_API}/wallets/me`, { headers, validateStatus: () => true });
     logs.push({ step: 'GET_WALLETS', status: walletsRes.status, response: walletsRes.data });
     const smartWalletAddress = walletsRes.data?.wallet_address || 'Unknown';
@@ -43,7 +43,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const startRes = await axios.post(startUrl, { questId: QUEST_ID }, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 3. Diagnostic Polling & Step-Verify Loop
+    // 3. Polling & Checking Progress
     let questState: any = null;
     let attempts = 0;
     const maxAttempts = 2;
@@ -56,17 +56,18 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       questState = progressRes.data;
       logs.push({ step: `POLL_PROGRESS_ATTEMPT_${attempts}`, status: progressRes.status, response: questState });
 
-      // Force log every step verification attempt regardless of status code
+      // Try alternative step-verification routes to see which one the backend accepts
       if (questState?.step_progress) {
         for (const [stepKey, stepData] of Object.entries(questState.step_progress) as [string, any][]) {
           if (!stepData.completed) {
-            const stepVerifyUrl = `${BASE_API}/quests/${QUEST_ID}/progress/${encodedUser}/steps/${stepKey}/verify`;
-            const stepRes = await axios.post(stepVerifyUrl, {}, { headers, validateStatus: () => true });
+            // Test route variation A: /verify
+            const verifyUrlA = `${BASE_API}/quests/${QUEST_ID}/progress/${encodedUser}/steps/${stepKey}/verify`;
+            const resA = await axios.post(verifyUrlA, {}, { headers, validateStatus: () => true });
+            
             logs.push({ 
-              step: `DIAGNOSTIC_VERIFY_STEP_${stepKey}`, 
-              status: stepRes.status, 
-              endpoint: stepVerifyUrl, 
-              response: stepRes.data 
+              step: `TEST_VERIFY_ROUTE_A_STEP_${stepKey}`, 
+              status: resA.status, 
+              response: resA.data 
             });
           }
         }
@@ -78,7 +79,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { smartWalletAddress, logs },
-      message: '🔍 Diagnostic run complete. Check the logs for step verification endpoints.'
+      message: '🔍 Gateway restored. Check logs for step verification routing responses.'
     };
 
   } catch (error: any) {
