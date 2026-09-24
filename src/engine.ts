@@ -33,53 +33,28 @@ export async function pollAccountVerification(input: string): Promise<{ success:
 
     const encodedUser = encodeURIComponent(jwtUserId);
 
-    // 1. Fetch Wallets on Correct API Gateway
+    // 1. Fetch Wallets
     const walletsRes = await axios.get(`${BASE_API}/wallets/me`, { headers, validateStatus: () => true });
     logs.push({ step: 'GET_WALLETS', status: walletsRes.status, response: walletsRes.data });
-    const smartWalletAddress = walletsRes.data?.wallet_address || 'Unknown';
 
     // 2. Start Quest Session
     const startUrl = `${BASE_API}/quests/${QUEST_ID}/start?user_id=${encodedUser}`;
     const startRes = await axios.post(startUrl, { questId: QUEST_ID }, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 3. Polling & Checking Progress
-    let questState: any = null;
-    let attempts = 0;
-    const maxAttempts = 2;
+    // 3. Test Global Verification Endpoints
+    const verifyRouteGlobal = `${BASE_API}/quests/${QUEST_ID}/verify`;
+    const resGlobal = await axios.post(verifyRouteGlobal, { user_id: jwtUserId }, { headers, validateStatus: () => true });
+    logs.push({ step: 'GLOBAL_VERIFY_ENDPOINT', status: resGlobal.status, response: resGlobal.data });
 
-    while (attempts < maxAttempts) {
-      attempts++;
-      const progressUrl = `${BASE_API}/quests/${QUEST_ID}/progress/${encodedUser}`;
-      const progressRes = await axios.get(progressUrl, { headers, validateStatus: () => true });
-      
-      questState = progressRes.data;
-      logs.push({ step: `POLL_PROGRESS_ATTEMPT_${attempts}`, status: progressRes.status, response: questState });
-
-      // Try alternative step-verification routes to see which one the backend accepts
-      if (questState?.step_progress) {
-        for (const [stepKey, stepData] of Object.entries(questState.step_progress) as [string, any][]) {
-          if (!stepData.completed) {
-            // Test route variation A: /verify
-            const verifyUrlA = `${BASE_API}/quests/${QUEST_ID}/progress/${encodedUser}/steps/${stepKey}/verify`;
-            const resA = await axios.post(verifyUrlA, {}, { headers, validateStatus: () => true });
-            
-            logs.push({ 
-              step: `TEST_VERIFY_ROUTE_A_STEP_${stepKey}`, 
-              status: resA.status, 
-              response: resA.data 
-            });
-          }
-        }
-      }
-      
-      await new Promise(resolve => setTimeout(resolve, 1500));
-    }
+    const verifyRouteProgress = `${BASE_API}/quests/${QUEST_ID}/progress/${encodedUser}/verify`;
+    const resProgress = await axios.post(verifyRouteProgress, {}, { headers, validateStatus: () => true });
+    logs.push({ step: 'PROGRESS_VERIFY_ENDPOINT', status: resProgress.status, response: resProgress.data });
 
     return {
       success: true,
-      data: { smartWalletAddress, logs },
-      message: '🔍 Gateway restored. Check logs for step verification routing responses.'
+      data: { logs },
+      message: '🔍 Global route diagnostic completed. Check results.'
     };
 
   } catch (error: any) {
