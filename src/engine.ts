@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE_API = 'https://api.proofchain.co.za';
+const BASE_API = 'https://fanpass.proofchain.co.za/api';
 const TENANT_ID = 'tenant_b56f41ce3351a7d08';
 const QUEST_ID = '81ff3b8a-03bf-488c-828c-f60923e96149';
 
@@ -8,14 +8,12 @@ export async function pollAccountVerification(input: string): Promise<{ success:
   try {
     const token = input.trim();
     
-    // Bulletproof headers with dual auth (Bearer + Cookie) and dual-case tenant IDs
     const headers: Record<string, string> = {
       'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
       'Accept': 'application/json, text/plain, */*',
       'Origin': 'https://fanpass.onefootball.com',
       'Referer': 'https://fanpass.onefootball.com/',
       'X-Tenant-ID': TENANT_ID,
-      'X-Tenant-id': TENANT_ID,
       'Authorization': `Bearer ${token}`,
       'Cookie': `access_token=${token}; token=${token}`,
       'Content-Type': 'application/json'
@@ -78,7 +76,7 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     return {
       success: true,
       data: { smartWalletAddress, logs },
-      message: success ? '🚀 Quest verified and successfully claimed!' : '⚡ Execution completed with dual-auth headers. Check logs.'
+      message: success ? '🚀 Quest verified and successfully claimed!' : '⚡ Execution completed on core gateway. Check logs.'
     };
 
   } catch (error: any) {
