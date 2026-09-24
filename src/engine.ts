@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE_API = 'https://fanpass.proofchain.co.za/api';
+const BASE_API = 'https://fanpass.onefootball.com/api';
 const TENANT_ID = 'tenant_b56f41ce3351a7d08';
 const QUEST_ID = '81ff3b8a-03bf-488c-828c-f60923e96149';
 
@@ -43,10 +43,10 @@ export async function pollAccountVerification(input: string): Promise<{ success:
     const startRes = await axios.post(startUrl, { questId: QUEST_ID }, { headers, validateStatus: () => true });
     logs.push({ step: 'START_QUEST', status: startRes.status, response: startRes.data });
 
-    // 3. Proactive Step-Sync & Polling Loop
+    // 3. Diagnostic Polling & Step-Verify Loop
     let questState: any = null;
     let attempts = 0;
-    const maxAttempts = 3;
+    const maxAttempts = 2;
 
     while (attempts < maxAttempts) {
       attempts++;
@@ -56,40 +56,29 @@ export async function pollAccountVerification(input: string): Promise<{ success:
       questState = progressRes.data;
       logs.push({ step: `POLL_PROGRESS_ATTEMPT_${attempts}`, status: progressRes.status, response: questState });
 
-      // Proactively try to force-verify any uncompleted step IDs
+      // Force log every step verification attempt regardless of status code
       if (questState?.step_progress) {
         for (const [stepKey, stepData] of Object.entries(questState.step_progress) as [string, any][]) {
           if (!stepData.completed) {
             const stepVerifyUrl = `${BASE_API}/quests/${QUEST_ID}/progress/${encodedUser}/steps/${stepKey}/verify`;
-            const stepRes = await axios.post(stepVerifyUrl, { stepIndex: stepKey }, { headers, validateStatus: () => true });
-            if (stepRes.status < 400) {
-              logs.push({ step: `FORCE_VERIFY_STEP_${stepKey}`, status: stepRes.status, response: stepRes.data });
-            }
+            const stepRes = await axios.post(stepVerifyUrl, {}, { headers, validateStatus: () => true });
+            logs.push({ 
+              step: `DIAGNOSTIC_VERIFY_STEP_${stepKey}`, 
+              status: stepRes.status, 
+              endpoint: stepVerifyUrl, 
+              response: stepRes.data 
+            });
           }
         }
       }
-
-      if (questState?.can_claim || questState?.completion_percentage === 100) {
-        break;
-      }
       
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 1500));
     }
-
-    // 4. Attempt Claim
-    let claimRes: any = { status: 400, data: { detail: 'Not ready for claim yet' } };
-    if (questState?.can_claim || questState?.completion_percentage === 100 || questState?.completion_percentage > 0) {
-      const claimUrl = `${BASE_API}/quests/${QUEST_ID}/progress/${encodedUser}/claim`;
-      claimRes = await axios.post(claimUrl, {}, { headers, validateStatus: () => true });
-      logs.push({ step: 'CLAIM_REWARD', status: claimRes.status, response: claimRes.data });
-    }
-
-    const success = claimRes.status >= 200 && claimRes.status < 300;
 
     return {
       success: true,
       data: { smartWalletAddress, logs },
-      message: success ? '🚀 Quest verified and successfully claimed!' : '⚡ Step-sync loop completed. Check logs for backend responses.'
+      message: '🔍 Diagnostic run complete. Check the logs for step verification endpoints.'
     };
 
   } catch (error: any) {
